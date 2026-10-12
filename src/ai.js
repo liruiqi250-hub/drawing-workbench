@@ -320,21 +320,27 @@ function createAiService({getSettings, dataDir, python, transport = globalThis.f
       const metadata = candidates.map(file => safeMetadata(file, current.sendPdfText));
       const allowedIds = new Set(metadata.map(file => file.id));
       if (allowedIds.size !== metadata.length) throw aiError('本地图纸候选 ID 重复，请重新索引后再试。', 400);
-      if (!metadata.length) return {matches: [], plan, totalCandidates: 0, usage};
+      const resultAdjustments = {duplicateCount: 0, unknownIdCount: 0};
+      if (!metadata.length) return {matches: [], plan, totalCandidates: 0, usage, resultAdjustments};
       const ranked = await completion(apiKey, current, usage,
-        '你是图纸相关性排序助手。仅从提供的候选中选择相关图纸并按相关性排序。只能返回候选已有id，不能生成其他id；每个id最多出现一次。reason最多300字，指出具体元数据依据，信息不足时明示；不编造图纸内容、尺寸或制造结论。naming 是本机按用户命名规则确定的字段：orderDate 是下单日期，orderBatch 是订单项目批次，productionSerial 保留生产序号及未经解释的追加段。备份时间戳不是下单日期，isBackup 仅是来源标记，不能推断已过期、可删除或与其他图纸相同。区分用户指定的订单批次、日期、序号、产品和尺寸；尺寸注明背高/翼展/半身时不要当总长。无匹配可返回空数组。json格式示例：{"matches":[{"id":"候选id","reason":"文件名包含钢架"}]}。',
-        {query: query.trim(), candidates: metadata, evidenceGuide:'候选id代表搜索显示的原图，evidence是组内实际命中的版本。请依据evidence.matches里的字段/片段判断，并在reason注明原图或备份名称。不能因为代表原图未含某标签就忽略备份的真实命中依据。'}, Math.min(16000, Math.max(1000, metadata.length * 140)));
+        '你是图纸相关性排序助手。仅从提供的候选中选择相关图纸并按相关性排序。结果id只能使用candidates.id，且必须在allowedResultIds内；evidence.fileId只作证据，不能用作结果id，也不能生成或映射其他id。每个id最多出现一次，结果数量不超过maxResults。reason最多300字，指出具体元数据依据，信息不足时明示；不编造图纸内容、尺寸或制造结论。naming 是本机按用户命名规则确定的字段：orderDate 是下单日期，orderBatch 是订单项目批次，productionSerial 保留生产序号及未经解释的追加段。备份时间戳不是下单日期，isBackup 仅是来源标记，不能推断已过期、可删除或与其他图纸相同。区分用户指定的订单批次、日期、序号、产品和尺寸；尺寸注明背高/翼展/半身时不要当总长。无匹配可返回空数组。json格式示例：{"matches":[{"id":"候选id","reason":"文件名包含钢架"}]}。',
+        {query: query.trim(), candidates: metadata, maxResults: metadata.length, allowedResultIds: [...allowedIds], evidenceGuide:'候选id代表搜索显示的原图，evidence是组内实际命中的版本。请依据evidence.matches里的字段/片段判断，并在reason注明原图或备份名称。不能因为代表原图未含某标签就忽略备份的真实命中依据。'}, Math.min(16000, Math.max(1000, metadata.length * 140)));
       object(ranked, ['matches'], '搜索结果');
-      if (!Array.isArray(ranked.matches) || ranked.matches.length > metadata.length) throw aiError('AI 返回搜索结果数量超出候选范围。');
+      if (!Array.isArray(ranked.matches)) throw aiError('AI 返回的搜索结果 matches 必须为数组，请手动重试。');
       const seen = new Set();
-      const matches = ranked.matches.map(match => {
+      const matches = [];
+      for (const match of ranked.matches) {
         object(match, ['id', 'reason'], '匹配项');
         const id = string(match.id, 100, '图纸 ID', false);
-        if (!allowedIds.has(id) || seen.has(id)) throw aiError('AI 返回了未知或重复的图纸 ID，本次结果已拒绝。');
+        const reason = string(match.reason, 300, '匹配依据', false);
+        // 每条记录先严格验格式，再仅清理候选范围以外的 ID 和重复项。
+        if (!allowedIds.has(id)) { resultAdjustments.unknownIdCount++; continue; }
+        if (seen.has(id)) { resultAdjustments.duplicateCount++; continue; }
         seen.add(id);
-        return {id, reason: string(match.reason, 300, '匹配依据', false)};
-      });
-      return {matches, plan, totalCandidates: metadata.length, usage};
+        matches.push({id, reason});
+      }
+      if (ranked.matches.length && !matches.length) throw aiError('AI 返回的搜索结果没有有效候选 ID，请手动重试。');
+      return {matches, plan, totalCandidates: metadata.length, usage, resultAdjustments};
     });
   }
 

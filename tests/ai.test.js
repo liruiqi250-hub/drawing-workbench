@@ -148,7 +148,11 @@ test('两阶段检索等待本地候选，仅传安全元数据，并记录两�
   assert.deepEqual(result.matches, [{id: 'f1', reason: '文件名包含霸王龙钢架'}]);
   assert.equal(result.totalCandidates, 1);
   assert.equal(result.usage.requests, 2);
-  const sent = JSON.parse(mock.calls[1].body.messages[1].content).candidates[0];
+  assert.deepEqual(result.resultAdjustments, {duplicateCount: 0, unknownIdCount: 0});
+  const payload = JSON.parse(mock.calls[1].body.messages[1].content);
+  assert.equal(payload.maxResults, 1);
+  assert.deepEqual(payload.allowedResultIds, ['f1']);
+  const sent = payload.candidates[0];
   assert.deepEqual(Object.keys(sent), ['id', 'name', 'folders', 'format', 'project', 'type', 'tags', 'naming']);
   assert.deepEqual(sent.folders, ['二层', '三层', '四层']);
   assert.ok(!mock.calls[1].options.body.includes('不可发送'));
@@ -168,6 +172,7 @@ test('无候选时只调用检索规划，不再付费排序', {skip: !hasDpapi}
   const result = await ai.search('霸王龙钢架', async () => []);
   assert.deepEqual(result.matches, []);
   assert.equal(result.totalCandidates, 0);
+  assert.deepEqual(result.resultAdjustments, {duplicateCount: 0, unknownIdCount: 0});
   assert.equal(mock.calls.length, 1);
 });
 
@@ -253,15 +258,83 @@ test('单并发 busy 保护，任务结束后恢复且拒绝过程中修改密�
   assert.equal(ai.status().busy, false);
 });
 
-test('搜索模型返回未知/重复 ID 或额外函数字段时拒绝整批结果', {skip: !hasDpapi}, async () => {
+test('搜索重复结果超过候选数时保留首次有效排名和依据，不自动重试', {skip: !hasDpapi}, async () => {
+  const mock = queued(plan, {matches: [
+    {id: 'f1', reason: '首次依据'}, {id: 'f1', reason: '重复依据'}, {id: 'f1', reason: '再次重复'}
+  ]});
+  const {ai} = service(mock.transport);
+  const result = await ai.search('霸王龙', () => [metadata()]);
+  assert.deepEqual(result.matches, [{id: 'f1', reason: '首次依据'}]);
+  assert.deepEqual(result.resultAdjustments, {duplicateCount: 2, unknownIdCount: 0});
+  assert.equal(mock.calls.length, 2);
+  assert.deepEqual(result.usage, {requests: 2, promptTokens: 20, completionTokens: 10, totalTokens: 30});
+});
+
+test('搜索混合超量结果仅保留候选代表ID，去重计数按丢弃记录且保留首次有效顺序', {skip: !hasDpapi}, async () => {
+  const mock = queued(plan, {matches: [
+    {id: 'backup', reason: '证据版本不能当结果'},
+    {id: 'f2', reason: '第二候选首次依据'},
+    {id: 'f2', reason: '第二候选重复依据'},
+    {id: 'forged', reason: '不存在'},
+    {id: 'backup', reason: '重复未知证据版本'},
+    {id: 'f1', reason: '第一候选首次依据'},
+    {id: 'f1', reason: '第一候选重复依据'}
+  ]});
+  const {ai, dataDir} = service(mock.transport);
+  const result = await ai.search('霸王龙', () => [metadata('f1', {
+    evidence: [{...metadata('backup'), fileId: 'backup', matches: []}]
+  }), metadata('f2')]);
+  assert.deepEqual(result.matches, [
+    {id: 'f2', reason: '第二候选首次依据'}, {id: 'f1', reason: '第一候选首次依据'}
+  ]);
+  assert.deepEqual(result.resultAdjustments, {duplicateCount: 2, unknownIdCount: 3});
+  assert.equal(result.matches.length, result.totalCandidates);
+  assert.equal(mock.calls.length, 2);
+  assert.deepEqual(result.usage, {requests: 2, promptTokens: 20, completionTokens: 10, totalTokens: 30});
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'ai-usage.json'), 'utf8')).requests, 2);
+  assert.equal(ai.status().busy, false);
+  const payload = JSON.parse(mock.calls[1].body.messages[1].content);
+  assert.equal(payload.maxResults, 2);
+  assert.deepEqual(payload.allowedResultIds, ['f1', 'f2']);
+  assert.equal(payload.candidates[0].evidence[0].fileId, 'backup');
+  assert.match(mock.calls[1].body.messages[0].content, /只能使用candidates\.id/);
+  assert.match(mock.calls[1].body.messages[0].content, /evidence\.fileId只作证据/);
+});
+
+test('搜索非空结果全部未知时明确拒绝，合法空数组正常返回空结果', {skip: !hasDpapi}, async () => {
+  const invalid = queued(plan, {matches: [{id: 'forged', reason: '甲'}, {id: 'forged', reason: '乙'}]});
+  const {ai} = service(invalid.transport);
+  await assert.rejects(ai.search('霸王龙', () => [metadata()]), /没有有效候选 ID/);
+  assert.equal(invalid.calls.length, 2);
+  assert.equal(ai.status().usage.requests, 2);
+  assert.equal(ai.status().busy, false);
+  const empty = queued(plan, {matches: []});
+  const result = await service(empty.transport).ai.search('霸王龙', () => [metadata()]);
+  assert.deepEqual(result.matches, []);
+  assert.deepEqual(result.resultAdjustments, {duplicateCount: 0, unknownIdCount: 0});
+  assert.equal(result.totalCandidates, 1);
+  assert.equal(result.usage.requests, 2);
+  assert.equal(empty.calls.length, 2);
+});
+
+test('搜索严格拒绝坏schema、越界字符串和额外工具字段，未知或重复记录也先验格式', {skip: !hasDpapi}, async () => {
+  const good = {id: 'f1', reason: '有效依据'};
   for (const ranked of [
-    {matches: [{id: 'forged', reason: '伪造'}]},
-    {matches: [{id: 'f1', reason: '甲'}, {id: 'f1', reason: '乙'}]},
-    {matches: [{id: 'f1', reason: '甲'}], function_call: {name: 'exec'}}
+    {}, {matches: null}, {matches: {}}, {matches: [null]}, {matches: [[]]},
+    {matches: [{id: 'f1'}]}, {matches: [{reason: '依据'}]},
+    ...[123, '', ' ', 'x'.repeat(101), 'f1\u0000'].map(id => ({matches: [{id, reason: '依据'}]})),
+    ...[123, '', ' ', '字'.repeat(301), '坏\u0007依据'].map(reason => ({matches: [good, {id: 'f1', reason}]})),
+    {matches: [good, {id: 'forged', reason: ''}]},
+    {matches: [good, {id: 'f1', reason: '重复', function_call: {name: 'exec'}}]},
+    {matches: [good, {id: 'forged', reason: '未知', tool_calls: []}]},
+    {matches: [good], function_call: {name: 'exec'}},
+    {matches: [good], tool_calls: []}
   ]) {
     const mock = queued(plan, ranked);
     const {ai} = service(mock.transport);
-    await assert.rejects(ai.search('霸王龙', () => [metadata(), metadata('f2')]), /ID|格式/);
+    await assert.rejects(ai.search('霸王龙', () => [metadata(), metadata('f2')]), /限制|格式|数组/);
+    assert.equal(mock.calls.length, 2);
+    assert.equal(ai.status().usage.requests, 2);
     assert.equal(ai.status().busy, false);
   }
 });
