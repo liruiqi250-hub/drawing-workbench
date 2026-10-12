@@ -1,6 +1,7 @@
 ﻿param(
     [switch]$NoLaunch,
     [switch]$NoShortcut,
+    [switch]$Offline,
     [string]$DownloadCache
 )
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ function Get-VerifiedPackage($item) {
         throw ('缓存文件校验不一致，请移走该文件后重试：' + $destination)
     }
     if (-not (Test-Path -LiteralPath $destination)) {
+        if ($Offline) { throw ('离线包缺少运行组件：' + $item.file + '。请重新下载完整离线包，或联网运行源码安装。') }
         Write-Host ('下载 ' + $item.file)
         $temporary = $destination + '.part'
         Invoke-WebRequest -Uri $item.url -OutFile $temporary -UseBasicParsing
@@ -33,10 +35,13 @@ $runtime = Join-Path $appDirectory 'runtime'
 $node = Join-Path $runtime 'node\node.exe'
 $python = Join-Path $runtime 'python\python.exe'
 $ready = $false
+if (Test-Path -LiteralPath (Join-Path $appDirectory 'bundled-runtime.json')) {
+    & (Join-Path $PSScriptRoot 'verify-bundled-runtime.ps1')
+}
 if ((Test-Path -LiteralPath $node) -and (Test-Path -LiteralPath $python)) {
     try {
         $nodeVersion = & $node --version
-        $pythonVersion = & $python -c "import sys, PIL, pypdfium2; print('.'.join(map(str,sys.version_info[:3])))"
+        $pythonVersion = & $python -B -c "import sys, PIL, pypdfium2; print('.'.join(map(str,sys.version_info[:3])))"
         $ready = $LASTEXITCODE -eq 0 -and $nodeVersion -eq ('v' + $manifest.node.version) -and $pythonVersion -eq $manifest.python.version
     } catch { $ready = $false }
 }
@@ -58,7 +63,7 @@ if (-not $ready) {
         Expand-Archive -LiteralPath $wheelZip -DestinationPath $sitePackages -Force
     }
     Set-Content -LiteralPath (Join-Path $staging 'python\python313._pth') -Value "python313.zip`n.`nLib\site-packages`nimport site" -Encoding ASCII
-    & (Join-Path $staging 'python\python.exe') -c "import PIL, pypdfium2; print('PDF runtime OK')"
+    & (Join-Path $staging 'python\python.exe') -B -c "import PIL, pypdfium2; print('PDF runtime OK')"
     if ($LASTEXITCODE -ne 0) { throw 'Python 预览环境检查失败，原安装未替换。' }
     if (Test-Path -LiteralPath $runtime) {
         & (Join-Path $appDirectory '停止图纸工作台.ps1')
@@ -78,7 +83,7 @@ if (-not $NoShortcut) {
     if (Test-Path -LiteralPath $shortcutPath) {
         $existing = $shell.CreateShortcut($shortcutPath)
         if ($existing.Arguments -notlike ('*' + $appDirectory + '*')) {
-            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.4.lnk'
+            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.5.lnk'
         }
     }
     $shortcut = $shell.CreateShortcut($shortcutPath)
@@ -86,9 +91,10 @@ if (-not $NoShortcut) {
     $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $appDirectory '启动图纸工作台.ps1') + '"'
     $shortcut.WorkingDirectory = $appDirectory
     $shortcut.WindowStyle = 7
-    $shortcut.Description = '图纸工作台 V0.5.4'
+    $shortcut.Description = '图纸工作台 V0.5.5'
     $shortcut.Save()
     Write-Host ('已创建桌面快捷方式：' + $shortcutPath)
 }
-Write-Host 'V0.5.4 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
+Write-Host 'V0.5.5 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
+& (Join-Path $appDirectory 'tools\windows_ocr.ps1') -Probe
 if (-not $NoLaunch) { & (Join-Path $appDirectory '启动图纸工作台.ps1') }

@@ -97,7 +97,7 @@ test('扫描根暂时失联时报告错误但保留原有索引、分类与标�
 });
 
 test('同文件改名后拒绝旧路径的预览结果，允许当前路径重新提交',async()=>{
-  const fixture=makeCase();await scope(fixture.root);fs.writeFileSync(fixture.file,'fixture');
+  const fixture=makeCase();await scope(fixture.root);config.saveSettings({pdf:{skipNamedDrawings:false}});fs.writeFileSync(fixture.file,'fixture');
   const original=meta(fixture.file),id=store.upsert(original).id;
   const renamed=path.join(fixture.root,'改名后的图纸.pdf');fs.renameSync(fixture.file,renamed);
   assert.equal(store.upsert(meta(renamed)).id,id);

@@ -1,13 +1,14 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const config=require('./config'),store=require('./store'),db=store.db;
+const pdfRules=require('./pdf-rules');
 db.exec("CREATE TABLE IF NOT EXISTS ai_suggestions(id TEXT PRIMARY KEY,file_id TEXT NOT NULL,source_stamp TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL)");
 const text=(value,max)=>String(value||'').trim().slice(0,max);
-const classification=row=>store.getClassification(row);
+const classification=(row,mode)=>store.getClassification(row,mode);
 function stamp(row){
   if(!row)return '';
-  const members=db.prepare('SELECT id,path,file_key,modified,size,content_revision,project,type,tags,classified FROM files WHERE alive=1 AND group_key=? ORDER BY id').all(row.group_key);
-  return crypto.createHash('sha256').update(JSON.stringify([row.id,row.path,store.contentVersion(row),classification(row),members])).digest('hex');
+  const members=db.prepare('SELECT id,path,file_key,modified,size,content_revision,project,type,tags,classified,pdf_kind,pdf_override,pdf_metadata FROM files WHERE alive=1 AND group_key=? ORDER BY id').all(row.group_key);
+  return crypto.createHash('sha256').update(JSON.stringify([row.id,row.path,store.contentVersion(row),classification(row,'all'),members,config.getSettings().pdf])).digest('hex');
 }
 function captureSnapshot(row){return {...row,aiSourceStamp:stamp(row)};}
 function publicSuggestion(suggestion){
@@ -64,9 +65,9 @@ function applySuggestion(id,data={}){
   }catch(error){db.exec('ROLLBACK TO ai_suggestion_apply;RELEASE ai_suggestion_apply');throw error;}
 }
 function dismissSuggestion(id){const suggestion=getSuggestion(id);if(!suggestion)throw new Error('AI 建议不存在。');db.prepare("UPDATE ai_suggestions SET status='dismissed' WHERE id=? AND status='pending'").run(id);}
-function metadataForAi(row,includeText=false,ownVersion=false){
+function metadataForAi(row,includeText=false,ownVersion=false,mode=config.getSettings().pdf.displayMode){
   const folders=path.dirname(row.path).split(/[\\/]/).filter(Boolean).slice(-3).filter(part=>!/:$/.test(part));
-  const common=ownVersion?row:classification(row),tags=ownVersion?JSON.parse(row.tags):common.tags;
+  const common=ownVersion?row:classification(row,mode),tags=ownVersion?JSON.parse(row.tags):common.tags;
   const result={id:row.id,name:row.name,folders,format:row.extension.slice(1).toUpperCase(),project:common.project,type:common.type,tags,naming:store.namingFor(row)};
   if(includeText&&row.extension==='.pdf'&&row.content)result.text=row.content.slice(0,2000);
   return result;
@@ -77,17 +78,19 @@ function evidenceFor(row,plan,includeText){
   const values={name:row.name,project:row.project,type:row.type,tags:JSON.parse(row.tags).join('，'),naming:row.naming_search||'',...(includeText&&row.extension==='.pdf'?{text:row.content||''}:{}),...(group?{groupProject:group.project,groupType:group.type,groupTags:(group.tags||[]).join('，')}:{})};
   const matches=[];
   for(const [field,value] of Object.entries(values)){
-    const found=terms.filter(term=>value.toLowerCase().includes(term.toLowerCase()));if(!found.length)continue;
+    const found=terms.filter(term=>field==='text'?pdfRules.normalize(value).includes(pdfRules.normalize(term)):value.toLowerCase().includes(term.toLowerCase()));if(!found.length)continue;
+    const pageEvidence=field==='text'?store.pdfMatches([row],found)[0]:null;
     const start=Math.max(0,value.toLowerCase().indexOf(found[0].toLowerCase())-50);
-    matches.push({field,terms:found.slice(0,8),snippet:value.slice(start,start+240)});
+    matches.push({field,terms:found.slice(0,8),snippet:pageEvidence?.snippet||value.slice(start,start+240),...(pageEvidence?{page:pageEvidence.page,source:pageEvidence.source,dimensions:pageEvidence.dimensions}:{})});
   }
   const folderMatches=path.dirname(row.path).split(/[\\/]/).filter(part=>!/:$/.test(part)&&terms.some(term=>part.toLowerCase().includes(term.toLowerCase()))).slice(-3);
   if(folderMatches.length)matches.push({field:'folder',terms:terms.filter(term=>folderMatches.join(' ').toLowerCase().includes(term.toLowerCase())).slice(0,8),snippet:folderMatches.join(' / ').slice(0,240)});
-  return {...meta,fileId:row.id,matches:matches.slice(0,8),sourceStamp:stamp(row),isBackup:!!row.is_backup,evidenceOrigin:origin.kind,...(group?{groupClassification:group}:{})};
+  return {...meta,fileId:row.id,matches:matches.slice(0,8),pdfMatches:includeText?store.pdfMatches([row],terms):[],sourceStamp:stamp(row),isBackup:!!row.is_backup,evidenceOrigin:origin.kind,...(group?{groupClassification:group}:{})};
 }
 function normalizeScope(input={}){
   if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('检索范围格式不正确。');
   const result={};for(const key of ['project','type'])if(input[key])result[key]=text(input[key],120);
+  if(input.pdfMode){if(!pdfRules.MODES.includes(input.pdfMode))throw new Error('PDF 显示范围无效。');result.pdfMode=input.pdfMode;}
   if(input.format){const format=String(input.format).trim().toLowerCase().replace(/^\./,'');if(!/^[a-z0-9]{1,12}$/.test(format))throw new Error('文件格式筛选不正确。');result.format='.'+format;}
   if(input.pending===true||input.pending==='1')result.pending=true;
   if(input.orderBatch){if(typeof input.orderBatch!=='string'||input.orderBatch.length>40)throw new Error('订单批次筛选无效。');result.orderBatch=input.orderBatch;}
@@ -105,7 +108,7 @@ function candidates(plan,scope={},limit=60,includeText=false){
       const matched=evidenceRows.some(member=>[member.name,member.path,member.project,member.type,member.tags,member.naming_search,includeText&&member.extension==='.pdf'?member.content:'',member.evidenceOrigin?.groupClassification?.project,member.evidenceOrigin?.groupClassification?.type,...(member.evidenceOrigin?.groupClassification?.tags||[])].some(value=>String(value||'').toLowerCase().includes(lower)));
       return matched&&!evidence.some(version=>version.matches.some(match=>match.terms.includes(term)||match.snippet.toLowerCase().includes(lower)));
     });
-    return {...metadataForAi(row,includeText),truncatedKeywords:[...new Set([...(truncatedKeywords||[]),...omitted])],evidence};
+    return {...metadataForAi(row,includeText,false,scope.pdfMode||config.getSettings().pdf.displayMode),truncatedKeywords:[...new Set([...(truncatedKeywords||[]),...omitted])],evidence};
   });
 }
 module.exports={stamp,captureSnapshot,saveSuggestions,getSuggestion,listSuggestions,applySuggestion,dismissSuggestion,metadataForAi,normalizeScope,candidates,assertDisk};

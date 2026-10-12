@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const pdfRules = require('./pdf-rules');
 const APP_DIR = path.resolve(__dirname, '..');
 const DATA_DIR = path.resolve(process.env.DRAWING_WORKBENCH_DATA || path.join(process.env.LOCALAPPDATA || require('node:os').homedir(), 'DrawingWorkbench', 'data'));
 const VERSION = require('../package.json').version;
@@ -14,6 +15,7 @@ const defaults = () => ({
   excludeDirs: ['Windows','Program Files','Program Files (x86)','ProgramData','$Recycle.Bin','System Volume Information','AppData','node_modules','.git','.test-tmp','.venv','venv','$WinREAgent','Recovery','MSOCache','Config.Msi'],
   watch: true, rescanMinutes:30, pageSize:50, autoStart:false,
   versionGrouping:true, groupingRules:[],
+  pdf:pdfRules.defaults(),
   classificationRules:[
     {keyword:'平面图',project:'',type:'平面图'},
     {keyword:'平面布置',project:'',type:'平面图'},
@@ -37,6 +39,7 @@ function validateAiSettings(input,base=defaults().ai){
 function validateSettings(input, base=defaults()) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('设置必须是对象。');
   const next = structuredClone(base);
+  next.pdf=pdfRules.validate(input.pdf===undefined?{}:input.pdf,base.pdf);
   if ('roots' in input) {
     if (!Array.isArray(input.roots) || !input.roots.length || input.roots.length>64) throw new Error('请至少添加一个扫描位置，最多 64 个。');
     next.roots = [...new Set(input.roots.map(p=>{

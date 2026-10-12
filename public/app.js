@@ -3,7 +3,7 @@
 
   const $ = id => document.getElementById(id);
   const state = {
-    scope: { kind: 'all', value: '' }, query: '', format: '', sort: 'modified',
+    scope: { kind: 'all', value: '' }, query: '', format: '', sort: 'modified', pdfMode: '', pdfBusy: false,
     page: 1, limit: 50, total: 0, items: [], selectedId: null, selectedFile: null, grouped:true,matchingFiles:0,versionsOpen:new Set(),
     status: null, settings: null, settingsOpen: false, settingsDirty: false,
     settingsLoading: false, settingsSaving: false, filesLoading: false,
@@ -118,6 +118,7 @@
     const labels = {
       pending: '等待提取', queued: '等待提取', extracting: '正在提取',
       ready: '已提取文字', extracted: '已提取文字', indexed: '已提取文字',
+      skipped_name: '文件名命中规则，已跳过正文',
       empty: '无可提取文字', scanned: '扫描件，尚未 OCR', unsupported: '暂不支持文字提取',
       error: '文字提取失败', failed: '文字提取失败', unavailable: '暂无文字内容',
       metadata: '已索引名称与路径', filename_only: '已索引名称与路径',
@@ -189,7 +190,7 @@
     if (status.ai) state.aiStatus = { ...state.aiStatus, ...status.ai };
     renderAiControls();
     renderNavigation(stats);
-    $('library-summary').textContent=`${number(stats.groupTotal)} 组图纸 · ${number(stats.physicalTotal)} 个原始文件 · 文件保留在原位置`;
+    $('library-summary').textContent=`默认范围 ${number(stats.groupTotal)} 组 · ${number(stats.physicalTotal)} 个文件 · 索引保留 ${number(stats.indexedPhysicalTotal ?? stats.physicalTotal)} 个原始文件`;
     $('index-banner').hidden = !indexing.running;
     $('index-title').textContent = '正在扫描图纸';
     $('index-summary').textContent = `已检查 ${number(indexing.scanned)} 项 · 发现 ${number(indexing.found)} 份 · 错误 ${number(indexing.errors)}`;
@@ -202,14 +203,15 @@
     $('settings-scan').disabled = Boolean(indexing.running || state.scanBusy);
     $('settings-scan').textContent = indexing.running ? '扫描中…' : '重新扫描';
     renderMaintenance(status);
+    renderPdfStatus(status);
   }
 
   function renderMaintenance(status) {
     const index = status.indexing || {};
     $('setting-version').textContent = `V${String(status.version || '0.5.2').replace(/^v/i, '')}`;
     $('setting-engine').textContent = status.engine || '—';
-    $('setting-total').textContent = `${number(status.stats?.groupTotal)} 组图纸 · ${number(status.stats?.physicalTotal)} 个原始文件 · ${number(status.stats?.versionGroups)} 组含多个版本`;
-    $('grouping-summary').textContent = `已归为 ${number(status.stats?.groupTotal)} 组，保留 ${number(status.stats?.physicalTotal)} 个原始文件。其中 ${number(status.stats?.backupFileCount)} 个文件标有备份来源或时间戳。`;
+    $('setting-total').textContent = `默认范围 ${number(status.stats?.groupTotal)} 组 · ${number(status.stats?.physicalTotal)} 个可见文件 · 索引保留 ${number(status.stats?.indexedPhysicalTotal ?? status.stats?.physicalTotal)} 个原始文件`;
+    $('grouping-summary').textContent = `默认范围 ${number(status.stats?.groupTotal)} 组、${number(status.stats?.physicalTotal)} 个文件，索引保留 ${number(status.stats?.indexedPhysicalTotal ?? status.stats?.physicalTotal)} 个原始文件。可见文件中 ${number(status.stats?.backupFileCount)} 个标有备份来源或时间戳。`;
     $('setting-index-status').textContent = index.running
       ? `扫描中，检查 ${number(index.scanned)} 项，发现 ${number(index.found)} 份，错误 ${number(index.errors)}`
       : `未在扫描，最近扫描错误 ${number(index.errors)}`;
@@ -238,6 +240,7 @@
       const firstLoad = !state.status;
       state.status = result;
       if (firstLoad && result.settings?.pageSize) state.limit = Number(result.settings.pageSize);
+      if (!state.pdfMode) { state.pdfMode = result.settings?.pdf?.displayMode || 'drawings-pending'; $('pdf-mode').value = state.pdfMode; if (['documents','pending'].includes(state.pdfMode)) { state.format='PDF'; $('format-filter').value='PDF'; } }
       renderStatus(result);
       errorFor('status', '');
       return result;
@@ -268,6 +271,7 @@
     if (state.scope.kind === 'backup') params.set('backup', state.scope.value);
     const format = state.format || (state.scope.kind === 'format' ? state.scope.value : '');
     if (format) params.set('format', format);
+    if (state.pdfMode) params.set('pdfMode', state.pdfMode);
     return params;
   }
 
@@ -373,11 +377,12 @@
       button.dataset.fileId = String(file.id);
       button.setAttribute('aria-pressed', String(file.id === state.selectedId));
       const format = el('span', 'format-icon', formatOf(file));
-      format.append(el('span', 'format-label', formatOf(file) === 'PDF' ? '文档' : '图纸'));
+      format.append(el('span', 'format-label', formatOf(file) === 'PDF' ? pdfKindLabel(file.pdfInfo?.kind) : '图纸'));
       const text = el('span', 'file-text');
       const meta = el('span', 'file-meta');
       meta.append(el('span', '', file.project || '项目待确认'), el('span', '', formattedDate(file.modified, true)), el('span', '', bytes(file.size)));
       const tags = el('span', 'tags');
+      if (file.pdfInfo) tags.append(el('span', `tag ${file.pdfInfo.kind === 'pending' ? 'pending' : 'project-kind'}`, `PDF · ${pdfKindLabel(file.pdfInfo.kind)}`));
       const naming = file.naming || {};
       if(file.group?.versionCount>1)tags.append(el('span','tag version',`${file.group.versionCount} 个版本 · ${file.group.backupCount} 个备份`));
       if(file.group&&!file.group.hasOriginal)tags.append(el('span','tag backup','仅找到备份'));
@@ -403,16 +408,77 @@
       }
       if (state.mode === 'ai' && file.aiReason) text.append(el('div', 'ai-reason', `相关理由：${file.aiReason}`));
       if(state.mode==='ai'&&file.matchEvidence?.length){const evidence=el('details','match-evidence');evidence.append(el('summary','','查看实际命中版本与证据'));file.matchEvidence.forEach(v=>{evidence.append(el('strong','small',`${v.isBackup?'备份':'原图'}：${v.name}`));(v.matches||[]).forEach(m=>evidence.append(el('p','small',`${({name:'名称',folder:'目录片段',project:'项目',type:'类型',tags:'标签',naming:'图号信息',text:'PDF文字',groupProject:'整组共同项目',groupType:'整组共同类型',groupTags:'整组共同标签'})[m.field]||m.field}：${m.snippet}`)));});if(file.evidenceTruncatedKeywords?.length)evidence.append(el('p','notice','部分可选词命中证据超过本次容量，未展开：'+file.evidenceTruncatedKeywords.join('，')));evidencePanel=evidence;}
+      if (file.pdfMatches?.length) {
+        const evidence = el('div','pdf-match-evidence');
+        file.pdfMatches.slice(0,3).forEach(match => {
+          const link=el('a','',`${match.fileId !== file.id ? match.name + ' · ' : ''}第 ${match.page} 页 · ${match.source === 'ocr' ? '本地 OCR' : 'PDF 文字'}`);
+          link.href=`/api/files/${encodeURIComponent(match.fileId || file.id)}/raw#page=${Number(match.page) || 1}`; link.target='_blank'; link.rel='noopener';
+          evidence.append(link,el('p','small',match.snippet));
+        });
+        if(evidencePanel)evidencePanel.append(evidence); else evidencePanel=evidence;
+      }
       button.append(format, text);
       if(evidencePanel){const wrapper=el('div','ai-result-with-evidence');wrapper.append(button,evidencePanel);return wrapper;}
       return button;
     }));
   }
 
+  function pdfKindLabel(kind) { return { drawing:'图纸', document:'普通文档', pending:'待判断' }[kind] || '待判断'; }
+  function renderPdfStatus(status) {
+    const index=status.pdfIndex || {}, counts=status.stats?.pdfCounts || {};
+    const progress=index.cancelled ? (index.running?'正在暂停，等待当前本地提取结束':'后台处理已暂停') : index.running ? `正在本地提取，已处理 ${number(index.processed)}，等待 ${number(index.queued)} 份` : status.settings?.pdf?.indexText === false ? '自动文字提取已关闭（仍可单独提取）' : index.queued ? `后台已处理 ${number(index.processed)}，等待 ${number(index.queued)} 份` : '后台处理空闲';
+    const summary=`PDF ${number(counts.total)} 份 · 图纸 ${number(counts.drawing)} · 待判断 ${number(counts.pending)} · 普通文档 ${number(counts.document)} · ${progress}`;
+    $('pdf-index-summary').textContent=summary;
+    $('setting-pdf-progress').textContent=summary + (index.current ? `；正在处理：${typeof index.current === 'object' ? index.current.name || '' : index.current}` : '') + (index.error ? `；提示：${index.error}` : '');
+    const cap=index.capabilities || {}, available=cap.available ?? cap.ocrAvailable;
+    $('setting-pdf-capability').textContent=available ? `本地 OCR 可用 · ${cap.engine || 'Windows.Media.Ocr'} · ${(cap.languages || []).join('、') || '本机语言'}` : `本地 OCR ${cap.error ? '暂不可用：'+cap.error : '能力检查中；无可用引擎时文件保留待判断'}`;
+    $('pdf-reindex').disabled=state.pdfBusy || state.settingsSaving;
+    $('pdf-cancel').disabled=state.pdfBusy || !(index.running || index.queued);
+  }
+  async function pdfReindex(cancel=false) {
+    if(state.pdfBusy)return;
+    if(state.settingsDirty && !cancel){notice('请先保存 PDF 设置，再重新提取。',true);return;}
+    state.pdfBusy=true; if(state.status)renderPdfStatus(state.status);
+    try { await api('/api/pdf/reindex',{method:'POST',body:cancel?{cancel:true}:{}}); notice(cancel?'已请求暂停；等待当前本地提取结束，已有结果保留。':'已安排重新提取与判断 PDF；人工指定类别和原文件保留。'); await refreshStatus(); }
+    catch(error){notice(error.message,true);}
+    finally {state.pdfBusy=false;if(state.status)renderPdfStatus(state.status);}
+  }
+  function renderPdfDetail(file) {
+    const info=file.pdfInfo || {}, box=el('section','pdf-detail');
+    box.append(el('h3','',`PDF 识别 · ${pdfKindLabel(info.kind)}`),el('p','small',`自动判断：${pdfKindLabel(info.automaticKind)}${info.override && info.override !== 'auto' ? '；已人工指定' : ''}。分类仅控制工作台显示，原文件保留。`));
+    (info.reasons || []).forEach(reason=>box.append(el('p','small',reason)));
+    const control=el('div','field-actions'), select=el('select'); select.setAttribute('aria-label','人工指定 PDF 类别');
+    [['auto','恢复自动判断'],['drawing','指定为图纸'],['pending','指定为待判断'],['document','指定为普通文档']].forEach(([value,label])=>{const option=el('option','',label);option.value=value;select.append(option);}); select.value=info.override || 'auto';
+    const save=actionButton('保存 PDF 类别',async()=>{
+      save.disabled=true;
+      try { await api(`/api/files/${encodeURIComponent(file.id)}/pdf-kind?pdfMode=${encodeURIComponent(state.pdfMode)}`,{method:'POST',body:{kind:select.value}}); notice('PDF 类别已保存，原文件未改动。'); await refreshStatus(); if(state.mode==='ai')invalidateAiSearch('PDF 类别已变化，请手动重新搜索。');else {await loadFiles({quiet:true});if(state.selectedId===file.id){state.selectedFile=null;await selectFile(file.id);}} }
+      catch(error){notice(error.message,true);}finally{save.disabled=false;}
+    });control.append(select,save);box.append(control);
+    box.append(el('p','small',`文字索引：${{pending:'等待提取',queued:'等待提取',processing:'正在提取',skipped_name:'文件名命中规则，已跳过正文',ready:'已提取',partial:'部分提取',no_text:'未提取到文字',error:'提取失败'}[info.status] || info.status || '等待提取'} · 已读取 ${number(info.readPages ?? info.indexedPages)} / ${number(info.totalPages)} 页 · 有文字 ${number(info.indexedPages)} 页 · OCR ${number(info.ocrPages)} 页`));
+    const extract=actionButton('单独提取文字与尺寸',async()=>{
+      extract.disabled=true;
+      try {await api(`/api/files/${encodeURIComponent(file.id)}/pdf-index?pdfMode=${encodeURIComponent(state.pdfMode)}`,{method:'POST',body:{}});notice('已安排本文件提取文字与尺寸，本次不受文件名跳过规则影响。');await refreshStatus();if(state.selectedId===file.id){state.selectedFile=null;await selectFile(file.id);}}
+      catch(error){notice(error.message,true);}finally{extract.disabled=false;}
+    });
+    box.append(extract);
+    if(info.status==='skipped_name')box.append(el('p','field-hint','本文件尚未读取图内文字和尺寸。需要时点击上方按钮，仅对这一份补提取。'));
+    if(info.truncated)box.append(el('p','notice','本次读取达到页数、字符或 OCR 上限，尚未覆盖全部内容；可在设置中调整后重新提取。'));
+    if(info.error)box.append(el('p','notice',info.error));
+    if(info.dimensions?.length)box.append(el('p','pdf-dimensions',`尺寸线索（请核对原图）：${info.dimensions.slice(0,40).map(value=>typeof value === 'string'?value:value.raw || value.normalized).join('、')}`));
+    (info.pages || []).forEach(page=>{
+      const details=el('details','pdf-page-text');details.append(el('summary','',`第 ${page.page} 页 · ${page.source==='ocr'?'本地 OCR':'PDF 文字'}${page.text?'':' · 无文字'}`));
+      const link=el('a','','打开原 PDF 此页');link.href=`/api/files/${encodeURIComponent(file.id)}/raw#page=${Number(page.page)||1}`;link.target='_blank';link.rel='noopener';details.append(link);
+      if(page.text)details.append(el('p','pdf-text',page.text));
+      if(page.ocrError || page.error)details.append(el('p','notice',page.ocrError || page.error));box.append(details);
+    });
+    return box;
+  }
+
   function resetFilters() {
     clearTimeout(state.searchTimer);
     state.searchTimer = null;
     state.scope = { kind: 'all', value: '' }; state.query = ''; state.format = ''; state.page = 1;
+    state.pdfMode = state.status?.settings?.pdf?.displayMode || 'drawings-pending'; $('pdf-mode').value = state.pdfMode;
     $('query').value = ''; $('format-filter').value = ''; updateActiveNavigation();
     if (state.mode === 'ai') invalidateAiSearch('查询已清空，请输入描述后点击“AI 搜索”。'); else loadFiles();
   }
@@ -428,7 +494,7 @@
     });
     $('detail').replaceChildren(el('div', 'detail-top', '图纸详情'), el('div', 'detail-empty', '正在读取原文件信息…'));
     try {
-      const file = await api(`/api/files/${encodeURIComponent(id)}`);
+      const file = await api(`/api/files/${encodeURIComponent(id)}?pdfMode=${encodeURIComponent(state.pdfMode)}`);
       if (request !== state.detailRequest) return;
       state.selectedFile = file;
       renderDetail(file);
@@ -447,11 +513,12 @@
     if (!current || state.drafts.get(current.id)?.dirty || $('detail').contains(document.activeElement)) return;
     const indexed = state.items.find(file => file.id === current.id)||state.items.find(file=>file.group?.id===current.group?.id);
     if (!indexed) { reconcileSelection(); return; }
+    const pdfChanged = indexed.id === current.id && JSON.stringify([indexed.pdfInfo?.kind,indexed.pdfInfo?.status,indexed.pdfInfo?.updatedAt,indexed.pdfInfo?.indexedPages]) !== JSON.stringify([current.pdfInfo?.kind,current.pdfInfo?.status,current.pdfInfo?.updatedAt,current.pdfInfo?.indexedPages]);
     const fields = ['name', 'path', 'extension', 'size', 'modified', 'project', 'type', 'tags', 'contentStatus', 'previewStatus', 'suggestion', 'naming', 'exists','group','classification','contentVersion'];
-    if (indexed.id===current.id?fields.every(key => JSON.stringify(indexed[key]) === JSON.stringify(current[key])):JSON.stringify(indexed.group)===JSON.stringify(current.group)) return;
+    if (!pdfChanged && (indexed.id===current.id?fields.every(key => JSON.stringify(indexed[key]) === JSON.stringify(current[key])):JSON.stringify(indexed.group)===JSON.stringify(current.group))) return;
     const request = state.detailRequest;
     try {
-      const file = await api(`/api/files/${encodeURIComponent(current.id)}`);
+      const file = await api(`/api/files/${encodeURIComponent(current.id)}?pdfMode=${encodeURIComponent(state.pdfMode)}`);
       if (request !== state.detailRequest || state.selectedId !== current.id || state.drafts.get(current.id)?.dirty || $('detail').contains(document.activeElement)) return;
       state.drafts.delete(file.id); state.selectedFile = file; renderDetail(file);
     } catch (_) {
@@ -581,6 +648,7 @@
     const data = el('dl', 'detail-data');
     [['项目', file.project || '待确认'], ['类型', file.type || '待确认'], ['格式', formatOf(file)], ['修改时间', formattedDate(file.modified)], ['文件大小', bytes(file.size)], ['内容状态', contentLabel(file)]].forEach(([label, value]) => data.append(el('dt', '', label), el('dd', '', value)));
     information.append(data, renderNaming(file));
+    if (formatOf(file) === 'PDF') information.append(renderPdfDetail(file));
     const pathBox = el('div', 'path-box'); pathBox.append(el('strong', '', '原文件路径'), el('span', '', file.path)); information.append(pathBox);
     const actions = el('div', 'detail-actions');
     ['open', 'locate'].forEach(action => {
@@ -663,8 +731,8 @@
     controls.forEach(control => { control.disabled = true; });
     button.textContent = '保存中…'; formError.hidden = true;
     try {
-      const result = await api(`/api/files/${encodeURIComponent(file.id)}/classify`, { method: 'POST', body: payload });
-      const savedFile = result.file;
+      const result = await api(`/api/files/${encodeURIComponent(file.id)}/classify?pdfMode=${encodeURIComponent(state.pdfMode)}`, { method: 'POST', body: payload });
+      const savedFile = await api(`/api/files/${encodeURIComponent(file.id)}?pdfMode=${encodeURIComponent(state.pdfMode)}`);
       state.drafts.delete(file.id);
       if (savedFile) { state.items = state.items.map(item => item.id === savedFile.id ? { ...item, ...savedFile } : item); renderResults(); }
       if (state.selectedId === file.id && savedFile) { state.selectedFile = { ...file, ...savedFile }; renderDetail(state.selectedFile); }
@@ -702,7 +770,7 @@
     $('search-submit').disabled = state.mode === 'ai' && busy;
     $('sort').disabled = state.mode === 'ai';
     $('sort').title = state.mode === 'ai' ? 'AI 结果按相关度排列；更改排序请切回关键词搜索。' : '';
-    $('query').placeholder = state.mode === 'ai' ? '例如：找去年暴龙头部机构的 PDF 图纸' : '输入文件名、图号、原路径或标签';
+    $('query').placeholder = state.mode === 'ai' ? '例如：找去年暴龙头部机构的 PDF 图纸' : '输入名称、图号、图内文字或尺寸，如 Φ20、500mm';
     const files = batchFiles();
     const count = Math.min(10, Math.max(1, Number(state.aiSettings?.batchSize || state.aiStatus.batchSize || 5)));
     $('ai-batch-button').textContent = state.aiTask === 'classify' ? 'AI 分析中…' : `AI 分析本页前 ${number(files.length)} 份待整理`;
@@ -725,6 +793,7 @@
     if (state.scope.kind === 'backup') scope.backup = state.scope.value;
     const format = state.format || (state.scope.kind === 'format' ? state.scope.value : '');
     if (format) scope.format = format;
+    if (state.pdfMode) scope.pdfMode = state.pdfMode;
     return scope;
   }
   function aiSnapshot() { return JSON.stringify([state.mode, $('query').value.trim(), currentAiScope()]); }
@@ -1070,6 +1139,15 @@
 
   function fillSettings(settings) {
     state.settingsLoading = true;
+    const pdf = settings.pdf || {};
+    $('setting-pdf-mode').value = pdf.displayMode || 'drawings-pending';
+    $('setting-pdf-index').checked = pdf.indexText !== false;
+    $('setting-pdf-skip-named').checked = pdf.skipNamedDrawings !== false;
+    $('setting-pdf-ocr').checked = pdf.ocrEnabled !== false;
+    $('setting-pdf-pages').value = pdf.maxPages || 30;
+    $('setting-pdf-ocr-pages').value = pdf.ocrMaxPages || 10;
+    $('setting-pdf-includes').value = (pdf.includeKeywords || []).join('\n');
+    $('setting-pdf-excludes').value = (pdf.excludeKeywords || []).join('\n');
     $('setting-roots').value = (settings.roots || []).join('\n');
     $('setting-extensions').value = (settings.extensions || []).join(' ');
     $('setting-excludes').value = (settings.excludeDirs || []).join('\n');
@@ -1138,6 +1216,7 @@
     });
     const groupingRules=[...$('grouping-rules-body').children].map(row=>{const rule={};row.querySelectorAll('[data-group-field]').forEach(input=>{rule[input.dataset.groupField]=input.type==='checkbox'?input.checked:input.value.trim();});return rule;});
     return { roots, extensions, excludeDirs: lines($('setting-excludes').value), watch: $('setting-watch').checked, versionGrouping:$('setting-grouping').checked,groupingRules,
+      pdf: { displayMode: $('setting-pdf-mode').value, indexText: $('setting-pdf-index').checked, skipNamedDrawings: $('setting-pdf-skip-named').checked, ocrEnabled: $('setting-pdf-ocr').checked, maxPages: Number($('setting-pdf-pages').value), ocrMaxPages: Number($('setting-pdf-ocr-pages').value), includeKeywords: lines($('setting-pdf-includes').value), excludeKeywords: lines($('setting-pdf-excludes').value) },
       rescanMinutes, pageSize: Number($('setting-page-size').value), autoStart: $('setting-autostart').checked, classificationRules };
   }
 
@@ -1155,6 +1234,8 @@
       const result = await api('/api/settings', { method: 'PUT', body: payload });
       state.settings = result.settings; state.limit = Number(result.settings.pageSize || payload.pageSize); state.page = 1;
       fillSettings(result.settings);
+      state.pdfMode = result.settings.pdf?.displayMode || 'drawings-pending'; $('pdf-mode').value = state.pdfMode;
+      if (['documents','pending'].includes(state.pdfMode)) { state.format='PDF'; $('format-filter').value='PDF'; }
       if (state.mode === 'ai') invalidateAiSearch('扫描设置已保存，请按当前索引范围手动重新 AI 搜索。');
       $('settings-dirty-note').textContent = result.reindexing ? '设置已保存，正在重新扫描' : '设置已保存';
       notice(result.reindexing ? '设置已保存，已开始按新范围扫描。' : '设置已保存到本机。');
@@ -1248,6 +1329,13 @@
   }
   $('confirm-root').addEventListener('click', addRoot);
   $('new-root').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); addRoot(); } });
+  $('pdf-mode').addEventListener('change',()=>{
+    state.pdfMode=$('pdf-mode').value;state.page=1;state.detailRequest++;state.selectedFile=null;
+    if(['documents','pending'].includes(state.pdfMode)){state.format='PDF';$('format-filter').value='PDF';}
+    if(state.mode==='ai')invalidateAiSearch('PDF 显示范围已变化，请手动重新搜索。');else loadFiles();
+  });
+  $('pdf-reindex').addEventListener('click',()=>pdfReindex(false));
+  $('pdf-cancel').addEventListener('click',()=>pdfReindex(true));
   $('scan-button').addEventListener('click', scan); $('settings-scan').addEventListener('click', scan); $('backup-button').addEventListener('click', backup);
 
   async function poll() {
@@ -1256,7 +1344,7 @@
     try {
       const previous = state.status;
       const current = await refreshStatus();
-      const changed = current && (current.indexing?.lastEventAt !== previous?.indexing?.lastEventAt || current.stats?.total !== previous?.stats?.total || current.stats?.pending !== previous?.stats?.pending || Boolean(previous?.indexing?.running && !current.indexing?.running));
+      const changed = current && (current.indexing?.lastEventAt !== previous?.indexing?.lastEventAt || current.stats?.total !== previous?.stats?.total || current.stats?.pending !== previous?.stats?.pending || current.pdfIndex?.processed !== previous?.pdfIndex?.processed || Boolean(previous?.indexing?.running && !current.indexing?.running));
       if (current && state.mode === 'keyword' && !state.filesLoading && !state.searchTimer && (changed || Date.now() - state.lastResultRefresh > 15000)) await loadFiles({ quiet: true });
     } finally { state.pollBusy = false; }
   }

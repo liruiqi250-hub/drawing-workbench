@@ -25,6 +25,7 @@ __pycache__/
 .test-tmp/
 dist/
 *.lnk
+bundled-runtime.json
 # 不把用户图纸作为样本加入源码
 *.dwg
 *.dxf

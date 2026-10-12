@@ -6,6 +6,8 @@ const config=require('./src/config');
 const store=require('./src/store');
 const indexer=require('./src/indexer');
 const preview=require('./src/preview');
+const pdfIndexer=require('./src/pdf-indexer');
+const pdfRules=require('./src/pdf-rules');
 const desktop=require('./src/desktop');
 const aiStore=require('./src/ai-store');
 const localRules=require('./src/local-rules');
@@ -58,7 +60,9 @@ async function handler(req,res){
       await body(req);
       json(res,200,{ok:true});setImmediate(shutdown);return;
     }
-    if(route==='/api/status'&&req.method==='GET')return json(res,200,{version:config.VERSION,engine:indexer.engine(),indexing:indexer.status(),stats:store.stats(),settings:config.getSettings(),ai:ai.status(),capabilities:preview.capabilities});
+    if(route==='/api/status'&&req.method==='GET')return json(res,200,{version:config.VERSION,engine:indexer.engine(),indexing:indexer.status(),pdfIndex:pdfIndexer.status(),stats:store.stats(),settings:config.getSettings(),ai:ai.status(),capabilities:preview.capabilities});
+    if(route==='/api/pdf/status'&&req.method==='GET')return json(res,200,pdfIndexer.status());
+    if(route==='/api/pdf/reindex'&&req.method==='POST'){const input=await body(req);return json(res,200,{ok:true,pdfIndex:input.cancel===true?pdfIndexer.cancel():await pdfIndexer.reindex()});}
     if(route==='/api/files'&&req.method==='GET')return json(res,200,store.search(Object.fromEntries(url.searchParams)));
     if(route==='/api/settings'&&req.method==='GET')return json(res,200,config.getSettings());
     if(route==='/api/rules/preview'&&req.method==='POST')return json(res,200,localRules.preview(await body(req)));
@@ -68,7 +72,11 @@ async function handler(req,res){
       if(next.autoStart||next.autoStart!==old.autoStart||'autoStart' in input)await desktop.setAutoStart(next.autoStart);
       // Independent AI settings may be saved while the startup shortcut is awaiting I/O.
       next.ai=config.getSettings().ai;
-      const settings=config.saveSettings(next);store.migrateGroups();store.invalidateStats();indexer.configure();return json(res,200,{ok:true,settings,reindexing:true});
+      const settings=config.saveSettings(next);store.migrateGroups();store.invalidateStats();
+      const scanChanged=['roots','extensions','excludeDirs','watch','rescanMinutes'].some(key=>JSON.stringify(old[key])!==JSON.stringify(settings[key]));
+      if(scanChanged)indexer.configure();
+      if(JSON.stringify(old.pdf)!==JSON.stringify(settings.pdf))await pdfIndexer.configure(old,settings);
+      return json(res,200,{ok:true,settings,reindexing:scanChanged,pdfIndex:pdfIndexer.status()});
     }
     if(route==='/api/ai/settings'&&req.method==='GET')return json(res,200,{settings:config.getSettings().ai,...ai.status()});
     if(route==='/api/ai/settings'&&req.method==='PUT'){
@@ -94,7 +102,7 @@ async function handler(req,res){
         requireActiveResponse(res);return safe;
       });
       const items=[];
-      for(const match of result.matches){const row=await allowedRow(match.id),snapshot=snapshots.get(match.id);if(row&&snapshot?.stamp===aiStore.stamp(row))items.push({...store.publicFile(row),aiReason:match.reason,matchEvidence:snapshot.evidence.map(({sourceStamp,...evidence})=>evidence),evidenceTruncatedKeywords:snapshot.truncatedKeywords});}
+      for(const match of result.matches){const row=await allowedRow(match.id),snapshot=snapshots.get(match.id);if(row&&snapshot?.stamp===aiStore.stamp(row))items.push({...store.publicFile(row,false,scope.pdfMode||config.getSettings().pdf.displayMode),aiReason:match.reason,matchEvidence:snapshot.evidence.map(({sourceStamp,...evidence})=>evidence),evidenceTruncatedKeywords:snapshot.truncatedKeywords});}
       const resultAdjustments=result.resultAdjustments||{duplicateCount:0,unknownIdCount:0},adjustmentNotes=[];
       if(resultAdjustments.duplicateCount)adjustmentNotes.push(`已合并 ${resultAdjustments.duplicateCount} 条重复返回`);
       if(resultAdjustments.unknownIdCount)adjustmentNotes.push(`已忽略 ${resultAdjustments.unknownIdCount} 条候选范围外返回`);
@@ -130,12 +138,15 @@ async function handler(req,res){
     if(route==='/api/backup'&&req.method==='POST'){
       const dir=path.join(config.DATA_DIR,'backups',new Date().toISOString().replace(/[:.]/g,'-'));fs.mkdirSync(dir,{recursive:true});await store.backup(path.join(dir,'drawings.sqlite'));fs.copyFileSync(config.CONFIG_PATH,path.join(dir,'settings.json'));return json(res,200,{ok:true,path:dir});
     }
-    const match=/^\/api\/files\/([^/]+)(?:\/(classify|open|locate|preview|raw))?$/.exec(route);
+    const match=/^\/api\/files\/([^/]+)(?:\/(classify|open|locate|preview|raw|pdf-kind|pdf-index))?$/.exec(route);
     if(match){
       const row=await allowedRow(match[1]);if(!row)return json(res,404,{error:'图纸不存在、暂不可访问，或已移出扫描范围。'});
+      const pdfMode=url.searchParams.get('pdfMode')||config.getSettings().pdf.displayMode;if(!pdfRules.MODES.includes(pdfMode))throw new Error('PDF 显示范围无效。');
       const action=match[2];
-      if(!action&&req.method==='GET'){preview.queueDetails(row.id);return json(res,200,{...store.publicFile(store.getRaw(row.id),true),previewNote:row.extension==='.dwg'?'DWG 使用文件内嵌缩略图；清晰度取决于原文件。':''});}
-      if(action==='classify'&&req.method==='POST')return json(res,200,{ok:true,file:store.classify(row.id,await body(req))});
+      if(!action&&req.method==='GET'){preview.queueDetails(row.id);return json(res,200,{...store.publicFile(store.getRaw(row.id),true,pdfMode),previewNote:row.extension==='.dwg'?'DWG 使用文件内嵌缩略图；清晰度取决于原文件。':''});}
+      if(action==='classify'&&req.method==='POST')return json(res,200,{ok:true,file:store.classify(row.id,await body(req),pdfMode)});
+      if(action==='pdf-kind'&&req.method==='POST')return json(res,200,{ok:true,file:store.setPdfKind(row.id,(await body(req)).kind,pdfMode)});
+      if(action==='pdf-index'&&req.method==='POST'){if(row.extension!=='.pdf')throw new Error('仅 PDF 支持补提取。');await body(req);const pdfIndex=await pdfIndexer.request(row.id);return json(res,200,{ok:true,file:store.publicFile(store.getRaw(row.id),true,pdfMode),pdfIndex});}
       if(action==='open'&&req.method==='POST'){await desktop.openFile(row.path);return json(res,200,{ok:true});}
       if(action==='locate'&&req.method==='POST'){await desktop.locateFile(row.path);return json(res,200,{ok:true});}
       if(action==='preview'&&req.method==='GET'){const png=await preview.ensure(row.id);if(!png)return json(res,404,{error:'此图纸暂时没有可用的真实预览。'});return streamFile(req,res,png,'image/png');}
@@ -154,9 +165,9 @@ async function handler(req,res){
 }
 const server=http.createServer((req,res)=>handler(req,res).catch(e=>{console.error(e);if(!res.headersSent)json(res,500,{error:'服务暂时无法完成请求。'});}));
 server.requestTimeout=60000;server.headersTimeout=10000;
-server.listen(config.PORT,HOST,()=>{fs.writeFileSync(path.join(config.DATA_DIR,'server.pid'),String(process.pid));console.log(`图纸工作台 V${config.VERSION} http://${HOST}:${config.PORT}`);indexer.start();if(config.getSettings().autoStart)desktop.setAutoStart(true).catch(error=>console.error('自动启动入口同步失败',error.message));});
-server.on('error',e=>{console.error('服务启动失败',e.message);process.exitCode=1;indexer.stop();store.close();});
+server.listen(config.PORT,HOST,()=>{fs.writeFileSync(path.join(config.DATA_DIR,'server.pid'),String(process.pid));console.log(`图纸工作台 V${config.VERSION} http://${HOST}:${config.PORT}`);indexer.start();pdfIndexer.start().catch(error=>console.error('PDF 索引启动失败',error.message));if(config.getSettings().autoStart)desktop.setAutoStart(true).catch(error=>console.error('自动启动入口同步失败',error.message));});
+server.on('error',e=>{console.error('服务启动失败',e.message);process.exitCode=1;indexer.stop();pdfIndexer.stop();store.close();});
 let closing=false;
-function shutdown(){if(closing)return;closing=true;indexer.stop();server.close(()=>{try{store.close();}catch{}process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();}
+function shutdown(){if(closing)return;closing=true;indexer.stop();pdfIndexer.stop();server.close(()=>{try{store.close();}catch{}process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();}
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
 module.exports={server,allowedRow,secure};

@@ -25,6 +25,11 @@ async function ensure(id){
   const row=store.getRaw(id);if(!row||!row.alive||!config.isAllowed(row.path))return null;
   if(!['.pdf','.dwg'].includes(row.extension)){if(row.content_status==='pending')store.setPreview(id,version(row),{status:'unsupported',preview:false,text:''});return null;}
   const key=`${id}-${version(row)}-${config.pathKey(row.path)}`;
+  if(row.extension==='.pdf'&&row.preview_version===version(row)){
+    if(row.preview_status==='ready'&&fs.existsSync(cachePath(row)))return cachePath(row);
+    if(row.preview_status==='unavailable')return null;
+    if(row.preview_status==='error'&&Date.now()-(attempts.get(key)||0)<5000)return null;
+  }
   if(row.preview_version===version(row)&&row.content_status!=='pending'){
     if(row.preview_status==='ready'&&fs.existsSync(cachePath(row)))return cachePath(row);
     if(row.content_status==='unsupported')return null;
