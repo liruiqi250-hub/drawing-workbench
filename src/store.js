@@ -126,10 +126,15 @@ function upsertPhysical(meta,generation='',options={}){
   db.prepare('UPDATE files SET naming_json=?,naming_search=?,order_batch=?,project_kind=?,is_backup=?,group_key=?,group_basis=?,group_rule=? WHERE id=?').run(...namingValues(naming),group.key,group.basis,group.ruleName,id);
   // Inherit by a cached live-group confirmation, without rescanning every prior
   // version for each new backup. Identity moves/replacements invalidate the cache.
-  if(old?.group_key!==group.key)inheritanceByGroup.delete(old?.group_key);
+  if(old&&(old.group_key!==group.key||!old.alive)){inheritanceByGroup.delete(old.group_key);inheritanceByGroup.delete(group.key);}
   if(atPath&&atPath.id!==old?.id)inheritanceByGroup.delete(atPath.group_key);
   if(!old){
-    if(!inheritanceByGroup.has(group.key)){const confirmations=db.prepare('SELECT DISTINCT m.confirmation_id FROM classification_members m JOIN files f ON f.id=m.file_id WHERE f.group_key=? AND f.alive=1 AND f.id<>? LIMIT 2').all(group.key,id);inheritanceByGroup.set(group.key,confirmations.length===1?confirmations[0].confirmation_id:'');}
+    if(!inheritanceByGroup.has(group.key)){
+      const confirmations=db.prepare('SELECT DISTINCT m.confirmation_id FROM classification_members m JOIN files f ON f.id=m.file_id WHERE f.group_key=? AND f.alive=1 AND f.id<>? LIMIT 2').all(group.key,id);
+      // A single confirmation ID alone is insufficient: an unassigned legacy
+      // member can disagree with it, or the complete tag union can overflow.
+      if(confirmations.length===1)getClassification({group_key:group.key});else inheritanceByGroup.set(group.key,'');
+    }
     const confirmation=inheritanceByGroup.get(group.key);if(confirmation)db.prepare('INSERT OR IGNORE INTO classification_members(file_id,confirmation_id)VALUES(?,?)').run(id,confirmation);
   }
   if(!old||old.group_key!==group.key||atPath&&atPath.id!==old.id){dirtyClassification(old?.group_key);dirtyClassification(atPath?.group_key);dirtyClassification(group.key);}invalidateStats();return {id,changed};

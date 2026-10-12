@@ -167,3 +167,23 @@ test('合法八主题各八同义词超过40个唯一词时，后排 optional �
   for(let i=0;i<20;i++){const member=add(`${requiredName} 普通${i}.dwg`,'ranking-full-plan');store.db.prepare('UPDATE files SET modified=? WHERE id=?').run(100+i,member.id);}
   const candidates=store.candidateRows({groups,keywords:[keyword]},{},20,false);assert.equal(candidates.length,20);assert.equal(candidates[0].row.id,target.id);assert.ok(candidates[0].evidenceRows.some(row=>row.evidenceOrigin.versionTerms.includes(keyword)));
 });
+
+test('已确认 B 身份连续移入已缓存 A 组后，新增版本不能未经查询便继承 A；拆组仍未分类',()=>{
+  const destination=add('连续入组目的.dwg','inheritance-move'),incoming=add('连续入组别名.dwg','inheritance-move');
+  store.classify(destination.id,{project:'目的组确认 A'});store.classify(incoming.id,{project:'来访组确认 B'});
+  const moved=path.join(root,'inheritance-move','连续入组目的 2026-03-02 14_52_26.dwg');fs.renameSync(incoming.file,moved);assert.equal(store.upsert(meta(moved)).id,incoming.id);
+  // Deliberately do not search or call getClassification between these upserts.
+  const joined=add('连续入组目的 2026-03-02 14_52_27.dwg','inheritance-move');
+  assert.equal(store.db.prepare('SELECT confirmation_id FROM classification_members WHERE file_id=?').get(joined.id),undefined);
+  assert.equal(store.getClassification(raw(destination)).conflict,true);
+  const separated=path.join(root,'inheritance-move','连续入组分离身份.dwg');fs.renameSync(joined.file,separated);assert.equal(store.upsert(meta(separated)).id,joined.id);
+  assert.equal(store.getClassification(raw(joined)).classified,false);assert.equal(store.getClassification(raw(joined)).project,'');assert.equal(raw(joined).classified,0);
+});
+
+test('只有一条共同确认但新加入 legacy 分类矛盾时，连续新增版本也不能继承该确认',()=>{
+  const destination=add('单确认冲突目的.dwg','inheritance-legacy'),incoming=add('单确认冲突别名.dwg','inheritance-legacy');
+  store.classify(destination.id,{project:'共同确认 A'});store.classify(incoming.id,{scope:'version',project:'物理版本 B'});
+  const moved=path.join(root,'inheritance-legacy','单确认冲突目的 2026-03-02 14_52_26.dwg');fs.renameSync(incoming.file,moved);store.upsert(meta(moved));
+  const joined=add('单确认冲突目的 2026-03-02 14_52_27.dwg','inheritance-legacy');assert.equal(store.db.prepare('SELECT confirmation_id FROM classification_members WHERE file_id=?').get(joined.id),undefined);assert.equal(store.getClassification(raw(destination)).conflict,true);
+  const separated=path.join(root,'inheritance-legacy','单确认冲突分离身份.dwg');fs.renameSync(joined.file,separated);store.upsert(meta(separated));assert.equal(store.getClassification(raw(joined)).classified,false);
+});
