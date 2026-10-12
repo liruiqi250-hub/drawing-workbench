@@ -27,3 +27,4 @@
 .group-rule-row label{display:block}
 .group-rule-row label.check-row{display:flex}
 .group-rule-row input[type=text]{display:block;width:100%;margin-top:4px}
+.local-rules-entry,.rules-options{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0}.rules-options{padding:12px 22px}.classification-info,.classification-conflict,.tag-difference{border:1px solid var(--line);border-radius:8px;padding:12px;margin:12px 0;overflow-wrap:anywhere}.classification-conflict{border-color:#c89543;background:#b27b1b18}.classification-conflict p,.tag-difference p{margin:8px 0}.classification-info p{margin-bottom:0}#local-rules-dialog{max-width:1000px;width:90vw}#local-rules-body{max-height:60vh;overflow:auto}#local-rules-error{margin:10px 22px}.local-rules-entry .small{flex:1;min-width:180px}

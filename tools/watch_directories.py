@@ -99,7 +99,17 @@ class Scope:
                 return None
         except ValueError:
             return None
-        if self.exclude_names.intersection(part.casefold() for part in key.split("\\")):
+        excluded = self.exclude_names.intersection(part.casefold() for part in key.split("\\"))
+        if ".test-tmp" in excluded:
+            # Match config.isExcluded: only an explicitly configured isolated root
+            # inside .test-tmp overrides this name; a whole drive never does.
+            for configured in self.roots:
+                configured_key = normalized(configured)
+                if ".test-tmp" in configured_key.split("\\"):
+                    if key == configured_key or key.startswith(configured_key.rstrip("\\") + "\\"):
+                        excluded.discard(".test-tmp")
+                        break
+        if excluded:
             return None
         if any(key == p or key.startswith(p.rstrip("\\") + "\\") for p in self.exclude_paths):
             return None

@@ -80,3 +80,16 @@ test('单PDF提取期间客户端断开，后端不会再开始付费AI分类',a
   try{await rejected;}finally{clearTimeout(timer);mock.child.stderr.off('data',listener);}
   assert.equal((await request(mock.port,'/api/status')).json.ai.fixtureClassifyCalls,before);
 });
+
+test('自动启动已为true时再次保存true仍同步新目录入口',async()=>{
+  let timer;const pending=new Promise((resolve,reject)=>{mock.child.once('message',resolve);timer=setTimeout(()=>reject(new Error('重复true未同步启动项')),3000);});
+  const saving=request(mock.port,'/api/settings','PUT',{autoStart:true});
+  try{assert.equal((await pending).fixture,'startupPending');mock.child.send({fixture:'releaseStartup'});assert.equal((await saving).status,200);}finally{clearTimeout(timer);}
+});
+
+test('本机批量规则走真实HTTP预览与确认，并受同源校验保护',async()=>{
+  const rejected=await request(real.port,'/api/rules/preview','POST',{}, {Origin:'https://attacker.example'});assert.equal(rejected.status,403);
+  const result=await request(real.port,'/api/rules/preview','POST',{query:'霸王龙',includeClassified:true,limit:10});assert.equal(result.status,200);assert.ok(result.json.items.length);
+  const item=result.json.items.find(item=>item.actionable&&!item.conflict);assert.ok(item);
+  const applied=await request(real.port,'/api/rules/apply','POST',{previewId:result.json.previewId,selections:[{id:item.id,stamp:item.stamp}]});assert.equal(applied.status,200);assert.equal(applied.json.applied,1);
+});

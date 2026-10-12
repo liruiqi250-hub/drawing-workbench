@@ -20,9 +20,12 @@ async function locateFile(p){
   if(result?.ok!==true||result.hresult!==0)throw new Error(result?.error||'Windows 没有确认图纸定位成功，请稍后重试。');
 }
 async function setAutoStart(enabled){
-  const startup=path.join(process.env.APPDATA,'Microsoft','Windows','Start Menu','Programs','Startup');
+  const startup=process.env.DRAWING_WORKBENCH_STARTUP||path.join(process.env.APPDATA,'Microsoft','Windows','Start Menu','Programs','Startup');
   const shortcut=path.join(startup,'图纸工作台.lnk');
-  if(!enabled){if(fs.existsSync(shortcut))fs.unlinkSync(shortcut);return;}
+  if(!enabled){
+    if(fs.existsSync(shortcut))await powershell(`$shell=New-Object -ComObject WScript.Shell;$entry=$shell.CreateShortcut(${literal(shortcut)});if($entry.Description -like '图纸工作台*' -or $entry.Arguments -like '*启动图纸工作台.ps1*' -or $entry.TargetPath -like '*后台启动.vbs'){Remove-Item -LiteralPath ${literal(shortcut)}}`);
+    return;
+  }
   fs.mkdirSync(startup,{recursive:true});
   const script=path.join(config.APP_DIR,'启动图纸工作台.ps1');
   const args=`-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${script}" -BackgroundOnly`;

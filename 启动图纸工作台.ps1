@@ -1,5 +1,7 @@
 ﻿param([switch]$BackgroundOnly)
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 try {
     $appDirectory = $PSScriptRoot
     $version = (Get-Content -LiteralPath (Join-Path $appDirectory 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
@@ -34,7 +36,11 @@ try {
             if ($taskProcess.HasExited) { break }
         }
     }
-    if (-not $healthy) { throw ('启动未完成，请检查 ' + (Join-Path $logDirectory 'server.error.log')) }
+    if (-not $healthy) {
+        $errorLog = Join-Path $logDirectory 'server.error.log'
+        $diagnostic = if (Test-Path -LiteralPath $errorLog) { (Get-Content -LiteralPath $errorLog -Encoding UTF8 -Tail 10) -join "`n" } else { '启动日志未能建立，请检查程序目录、个人数据目录权限及运行环境。' }
+        throw ("启动未完成。`n" + $diagnostic + "`n日志位置：" + $errorLog)
+    }
     if (-not $BackgroundOnly) { Start-Process $appUrl }
 } catch {
     if (-not $BackgroundOnly -and -not $env:DRAWING_WORKBENCH_HEADLESS) {

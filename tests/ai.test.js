@@ -371,3 +371,16 @@ test('本地损坏凭证不出网，模型可配置但 endpoint 固定', {skip: 
   assert.equal(mock.calls[0].body.model, 'deepseek-v4-pro');
   assert.equal(mock.calls[0].url, 'https://api.deepseek.com/chat/completions');
 });
+
+test('真实AI请求载荷保留备份命中证据，去掉本地快照与绝对路径并遵守PDF开关',{skip:!hasDpapi},async()=>{
+  for(const sendPdfText of [false,true]){
+    const mock=queued(plan,{matches:[{id:'original',reason:'备份标签命中专用转向关节'}]}),settings=baseSettings();settings.ai.sendPdfText=sendPdfText;
+    const candidate=metadata('original',{name:'机械原图.dwg',evidence:[{...metadata('backup',{name:'机械原图 2026-10-12 10_30_00.pdf',format:'PDF',tags:['专用转向关节'],text:'PDF证据'}),fileId:'backup',isBackup:true,path:'X:\\private\\backup.pdf',sourceStamp:'local-private-stamp',matches:[{field:'tags',terms:['专用转向关节'],snippet:'专用转向关节'},{field:'text',terms:['PDF'],snippet:'PDF证据'}]}]});
+    await service(mock.transport,{settings}).ai.search('找专用转向关节',()=>[candidate]);
+    const payload=JSON.parse(mock.calls[1].body.messages[1].content),evidence=payload.candidates[0].evidence[0];
+    assert.equal(evidence.fileId,'backup');assert.equal(evidence.isBackup,true);assert.ok(evidence.matches.some(v=>v.field==='tags'));
+    assert.equal(evidence.path,undefined);assert.equal(evidence.sourceStamp,undefined);
+    assert.equal(evidence.text,sendPdfText?'PDF证据':undefined);assert.equal(evidence.matches.some(v=>v.field==='text'),sendPdfText);
+    assert.ok(!JSON.stringify(payload).includes('private'));assert.match(payload.evidenceGuide,/实际命中/);
+  }
+});

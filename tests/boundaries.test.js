@@ -17,6 +17,13 @@ const store=require('../src/store');
 const indexer=require('../src/indexer');
 let sequence=0;
 
+test('全盘默认排除开发验收目录，显式隔离验收根仍可单独索引',()=>{
+  const sample=path.join(baseline,'sample.pdf'),settings=config.getSettings();
+  assert.ok(settings.excludeDirs.includes('.test-tmp'));
+  assert.equal(config.isExcluded(sample,{...settings,roots:[path.parse(sample).root]}),true);
+  assert.equal(config.isExcluded(sample,{...settings,roots:[baseline]}),false);
+});
+
 test.beforeEach(async()=>{
   await indexer.scan('settle-before-case');
   store.db.exec('DELETE FROM files; DELETE FROM events;');store.invalidateStats();

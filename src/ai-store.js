@@ -1,58 +1,89 @@
 'use strict';
-const crypto=require('node:crypto');
-const fs=require('node:fs');
-const path=require('node:path');
-const config=require('./config');
-const store=require('./store');
-const db=store.db;
-db.exec(`CREATE TABLE IF NOT EXISTS ai_suggestions(
- id TEXT PRIMARY KEY,file_id TEXT NOT NULL,source_stamp TEXT NOT NULL,payload TEXT NOT NULL,
- status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL
-);CREATE INDEX IF NOT EXISTS ai_suggestions_file ON ai_suggestions(file_id,status);`);
-function stamp(row){return crypto.createHash('sha256').update(JSON.stringify([config.pathKey(row.path),row.modified,row.size,row.project,row.type,row.tags,row.classified])).digest('hex');}
-function text(value,max){return String(value||'').trim().slice(0,max);}
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const config=require('./config'),store=require('./store'),db=store.db;
+db.exec("CREATE TABLE IF NOT EXISTS ai_suggestions(id TEXT PRIMARY KEY,file_id TEXT NOT NULL,source_stamp TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created INTEGER NOT NULL)");
+const text=(value,max)=>String(value||'').trim().slice(0,max);
+const classification=row=>store.getClassification(row);
+function stamp(row){
+  if(!row)return '';
+  const members=db.prepare('SELECT id,path,file_key,modified,size,content_revision,project,type,tags,classified FROM files WHERE alive=1 AND group_key=? ORDER BY id').all(row.group_key);
+  return crypto.createHash('sha256').update(JSON.stringify([row.id,row.path,store.contentVersion(row),classification(row),members])).digest('hex');
+}
+function captureSnapshot(row){return {...row,aiSourceStamp:stamp(row)};}
 function publicSuggestion(suggestion){
-  const row=store.getRaw(suggestion.file_id);const payload=JSON.parse(suggestion.payload);
-  return {id:suggestion.id,fileId:suggestion.file_id,name:row?.name||'图纸已不可用',path:row?.path||'',...payload,rulesVersion:payload.rulesVersion||'0.3.0',
-    status:suggestion.status==='pending'&&(!row?.alive||stamp(row)!==suggestion.source_stamp)?'stale':suggestion.status,created:suggestion.created};
+  const row=store.getRaw(suggestion.file_id),payload=JSON.parse(suggestion.payload),current=row?classification(row):{project:'',type:'',tags:[]};
+  const proposed=payload.tags||[],existing=current.tags||[];
+  return {id:suggestion.id,fileId:suggestion.file_id,name:row?.name||'图纸已不可用',path:row?.path||'',...payload,
+    existingClassification:current,tagDiff:{added:proposed.filter(v=>!existing.includes(v)),omitted:existing.filter(v=>!proposed.includes(v)),defaultAction:'merge-preserve'},
+    rulesVersion:payload.rulesVersion||'0.3.0',status:suggestion.status==='pending'&&(!row?.alive||stamp(row)!==suggestion.source_stamp)?'stale':suggestion.status,created:suggestion.created};
 }
 function saveSuggestions(proposals,originals){
-  const result=[];
-  db.exec('BEGIN');
+  const result=[];db.exec('SAVEPOINT ai_suggestion_save');
   try{
     for(const proposal of proposals){
       const row=originals.get(proposal.id);if(!row)throw new Error('AI 返回了未提供的图纸。');
+      if(!row.aiSourceStamp)throw new Error('AI 输入缺少请求前快照，未保存建议，请重新分析。');
+      const sourceStamp=row.aiSourceStamp,fresh=store.getRaw(row.id);
+      if(!fresh?.alive||stamp(fresh)!==sourceStamp)throw staleError();
       const payload={project:text(proposal.project,120),type:text(proposal.type,120),tags:[...new Set((proposal.tags||[]).map(v=>text(v,100)).filter(Boolean))].slice(0,20),reason:text(proposal.reason,500),summary:text(proposal.summary,500),rulesVersion:config.VERSION};
       const id=crypto.randomBytes(12).toString('hex');
       db.prepare("UPDATE ai_suggestions SET status='superseded' WHERE file_id=? AND status='pending'").run(row.id);
-      db.prepare('INSERT INTO ai_suggestions(id,file_id,source_stamp,payload,created)VALUES(?,?,?,?,?)').run(id,row.id,stamp(row),JSON.stringify(payload),Date.now());
-      result.push(publicSuggestion(db.prepare('SELECT * FROM ai_suggestions WHERE id=?').get(id)));
+      db.prepare('INSERT INTO ai_suggestions(id,file_id,source_stamp,payload,created)VALUES(?,?,?,?,?)').run(id,row.id,sourceStamp,JSON.stringify(payload),Date.now());
+      result.push(publicSuggestion(getSuggestion(id)));
     }
-    db.exec('COMMIT');return result;
-  }catch(error){db.exec('ROLLBACK');throw error;}
+    db.exec('RELEASE ai_suggestion_save');return result;
+  }catch(error){db.exec('ROLLBACK TO ai_suggestion_save;RELEASE ai_suggestion_save');throw error;}
 }
 function getSuggestion(id){return /^[a-f0-9]{24}$/.test(id)?db.prepare('SELECT * FROM ai_suggestions WHERE id=?').get(id):null;}
 function listSuggestions(fileId){
   const rows=fileId?db.prepare("SELECT * FROM ai_suggestions WHERE status='pending' AND file_id=? ORDER BY created DESC LIMIT 50").all(fileId):db.prepare("SELECT * FROM ai_suggestions WHERE status='pending' ORDER BY created DESC LIMIT 50").all();
   return rows.filter(s=>{const row=store.getRaw(s.file_id);return row?.alive&&config.isAllowed(row.path);}).map(publicSuggestion);
 }
-function staleError(){const error=new Error('原图或分类已变化，这条 AI 建议已过期。请重新分析后再确认。');error.status=409;return error;}
-function applySuggestion(id,data){
+function staleError(){const error=new Error('原图、组成员或分类已变化，这条 AI 建议已过期。请重新分析后再确认。');error.status=409;return error;}
+function assertDisk(row){
+  try{
+    const stat=fs.statSync(row.path,{bigint:true});
+    const key=stat.ino?`${path.parse(row.path).root.toLowerCase()}:${stat.dev}:${stat.ino}`:'';
+    if(Number(stat.size)!==row.size||Number(stat.mtimeMs)!==Math.trunc(row.modified)||(row.file_key&&key!==row.file_key)||!config.isAllowed(fs.realpathSync(row.path)))throw staleError();
+  }catch{throw staleError();}
+}
+function applySuggestion(id,data={}){
   const suggestion=getSuggestion(id);if(!suggestion)throw new Error('AI 建议不存在。');
   const row=store.getRaw(suggestion.file_id);
   if(suggestion.status!=='pending'||!row?.alive||stamp(row)!==suggestion.source_stamp||!config.isAllowed(row.path))throw staleError();
-  // Confirm the actual disk version even when its watch event is still being processed.
-  try{const stat=fs.statSync(row.path);if(stat.size!==row.size||Math.trunc(stat.mtimeMs)!==Math.trunc(row.modified)||!config.isAllowed(fs.realpathSync(row.path)))throw staleError();}catch{throw staleError();}
-  db.exec('BEGIN');
-  try{const file=store.classify(row.id,data);db.prepare("UPDATE ai_suggestions SET status='applied' WHERE id=?").run(id);db.exec('COMMIT');return file;}catch(error){db.exec('ROLLBACK');throw error;}
+  assertDisk(row);
+  const current=classification(row),proposal=JSON.parse(suggestion.payload);
+  const proposedTags=Array.isArray(data.tags)?data.tags:(proposal.tags||[]);
+  const requested=[...new Set(proposedTags.map(v=>String(v).trim()).filter(Boolean))];
+  const tags=data.confirmTagRemoval===true?requested:[...new Set([...(current.tags||[]),...requested])];
+  if(tags.length>50||tags.some(v=>v.length>100))throw new Error('合并后标签超过 50 个或单项超过 100 字；请编辑建议并明确确认需要删除的人工标签，已有标签未改动。');
+  db.exec('SAVEPOINT ai_suggestion_apply');
+  try{
+    const file=store.classify(row.id,{project:data.project===undefined?(proposal.project||current.project):data.project,type:data.type===undefined?(proposal.type||current.type):data.type,tags,scope:'group',resolveConflict:data.resolveConflict===true});
+    db.prepare("UPDATE ai_suggestions SET status='applied' WHERE id=?").run(id);db.exec('RELEASE ai_suggestion_apply');return file;
+  }catch(error){db.exec('ROLLBACK TO ai_suggestion_apply;RELEASE ai_suggestion_apply');throw error;}
 }
 function dismissSuggestion(id){const suggestion=getSuggestion(id);if(!suggestion)throw new Error('AI 建议不存在。');db.prepare("UPDATE ai_suggestions SET status='dismissed' WHERE id=? AND status='pending'").run(id);}
-function metadataForAi(row,includeText=false){
-  // Never send an absolute path or a complete library listing.
+function metadataForAi(row,includeText=false,ownVersion=false){
   const folders=path.dirname(row.path).split(/[\\/]/).filter(Boolean).slice(-3).filter(part=>!/:$/.test(part));
-  const result={id:row.id,name:row.name,folders,format:row.extension.slice(1).toUpperCase(),project:row.project,type:row.type,tags:JSON.parse(row.tags),naming:store.namingFor(row)};
+  const common=ownVersion?row:classification(row),tags=ownVersion?JSON.parse(row.tags):common.tags;
+  const result={id:row.id,name:row.name,folders,format:row.extension.slice(1).toUpperCase(),project:common.project,type:common.type,tags,naming:store.namingFor(row)};
   if(includeText&&row.extension==='.pdf'&&row.content)result.text=row.content.slice(0,2000);
   return result;
+}
+function evidenceFor(row,plan,includeText){
+  const terms=[...new Set([...(plan.groups||[]).flat(),...(plan.keywords||[])])].filter(v=>typeof v==='string'&&v.trim());
+  const meta=metadataForAi(row,includeText,true),origin=row.evidenceOrigin||{kind:'version'},group=origin.groupClassification;
+  const values={name:row.name,project:row.project,type:row.type,tags:JSON.parse(row.tags).join('，'),naming:row.naming_search||'',...(includeText&&row.extension==='.pdf'?{text:row.content||''}:{}),...(group?{groupProject:group.project,groupType:group.type,groupTags:(group.tags||[]).join('，')}:{})};
+  const matches=[];
+  for(const [field,value] of Object.entries(values)){
+    const found=terms.filter(term=>value.toLowerCase().includes(term.toLowerCase()));if(!found.length)continue;
+    const start=Math.max(0,value.toLowerCase().indexOf(found[0].toLowerCase())-50);
+    matches.push({field,terms:found.slice(0,8),snippet:value.slice(start,start+240)});
+  }
+  const folderMatches=path.dirname(row.path).split(/[\\/]/).filter(part=>!/:$/.test(part)&&terms.some(term=>part.toLowerCase().includes(term.toLowerCase()))).slice(-3);
+  if(folderMatches.length)matches.push({field:'folder',terms:terms.filter(term=>folderMatches.join(' ').toLowerCase().includes(term.toLowerCase())).slice(0,8),snippet:folderMatches.join(' / ').slice(0,240)});
+  return {...meta,fileId:row.id,matches:matches.slice(0,8),sourceStamp:stamp(row),isBackup:!!row.is_backup,evidenceOrigin:origin.kind,...(group?{groupClassification:group}:{})};
 }
 function normalizeScope(input={}){
   if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('检索范围格式不正确。');
@@ -65,31 +96,16 @@ function normalizeScope(input={}){
   return result;
 }
 function candidates(plan,scope={},limit=60,includeText=false){
-  const filters=['alive=1'];const args=[];
-  for(const key of ['project','type'])if(scope[key]){filters.push(key+'=?');args.push(scope[key]);}
-  store.addNamingFilters(filters,args,scope);
-  if(scope.format){filters.push('extension=?');args.push(scope.format);}
-  if(scope.pending)filters.push('classified=0');
-  const pattern=term=>'%'+term.replace(/[\\%_]/g,'\\$&')+'%';
-  const columns=['name','path','project','type','tags','naming_search',...(includeText?['content']:[])];
-  const matchTerm=term=>{args.push(...columns.map(()=>pattern(term)));return '('+columns.map(col=>`${col} LIKE ? ESCAPE '\\'`).join(' OR ')+')';};
-  // AND between subjects, OR between synonyms. Optional terms affect local ranking only.
-  const groups=(plan.groups||[]).map(g=>g.filter(v=>typeof v==='string'&&v.trim()));
-  if(!groups.length&&plan.keywords?.length)groups.push(plan.keywords);
-  if(!groups.length)throw new Error('AI 未生成有效检索条件，请补充名称、项目、用途或零件特征。');
-  for(const group of groups)filters.push('('+group.map(matchTerm).join(' OR ')+')');
-  const formats=(plan.formats||[]).filter(f=>/^\.?[a-zA-Z0-9]{1,12}$/.test(f)).map(f=>'.'+f.toLowerCase().replace(/^\./,''));
-  if(formats.length&&!scope.format){filters.push('extension IN ('+formats.map(()=>'?').join(',')+')');args.push(...formats);}
-  const optional=(plan.keywords||[]).filter(v=>typeof v==='string'&&v.trim()).slice(0,12);
-  const scoring=[],scoreArgs=[];
-  for(const term of [...new Set([...groups.flat(),...optional])]){
-    scoring.push("CASE WHEN name LIKE ? ESCAPE '\\' THEN 4 ELSE 0 END");scoreArgs.push(pattern(term));
-    scoring.push("CASE WHEN (path||' '||project||' '||type||' '||tags"+(includeText?"||' '||content":"")+") LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END");scoreArgs.push(pattern(term));
-  }
-  // Rank all scoped subject matches in SQLite before applying the candidate cap.
-  const grouped=config.getSettings().versionGrouping;
-  const sql=grouped?`WITH matched AS (SELECT group_key,(${scoring.join('+')}) AS ai_score FROM files WHERE ${filters.join(' AND ')}),scores AS (SELECT group_key,MAX(ai_score) AS ai_score FROM matched GROUP BY group_key),ranked AS (SELECT files.*,ROW_NUMBER() OVER(PARTITION BY group_key ORDER BY ${store.representativeOrder}) AS rn FROM files WHERE alive=1 AND group_key IN (SELECT group_key FROM scores)) SELECT ranked.*,scores.ai_score FROM ranked JOIN scores USING(group_key) WHERE rn=1${scope.pending?' AND classified=0':''} ORDER BY ai_score DESC,modified DESC LIMIT ?`:'SELECT *,('+scoring.join('+')+') AS ai_score FROM files WHERE '+filters.join(' AND ')+' ORDER BY ai_score DESC,modified DESC LIMIT ?';
-  const rows=db.prepare(sql).all(...scoreArgs,...args,Math.max(20,Math.min(100,limit)));
-  return rows.filter(row=>config.isAllowed(row.path)).map(row=>metadataForAi(row,includeText));
+  return store.candidateRows(plan,scope,limit,includeText).filter(({row})=>config.isAllowed(row.path)).map(({row,evidenceRows,truncatedKeywords})=>{
+    const evidence=evidenceRows.filter(member=>config.isAllowed(member.path)).map(member=>evidenceFor(member,plan,includeText));
+    // Candidate ownership is established before excerpts are bounded. Report optional
+    // terms lost by that final bound, rather than silently claiming visible evidence.
+    const omitted=(plan.keywords||[]).filter(term=>{
+      const lower=term.toLowerCase();
+      const matched=evidenceRows.some(member=>[member.name,member.path,member.project,member.type,member.tags,member.naming_search,includeText&&member.extension==='.pdf'?member.content:'',member.evidenceOrigin?.groupClassification?.project,member.evidenceOrigin?.groupClassification?.type,...(member.evidenceOrigin?.groupClassification?.tags||[])].some(value=>String(value||'').toLowerCase().includes(lower)));
+      return matched&&!evidence.some(version=>version.matches.some(match=>match.terms.includes(term)||match.snippet.toLowerCase().includes(lower)));
+    });
+    return {...metadataForAi(row,includeText),truncatedKeywords:[...new Set([...(truncatedKeywords||[]),...omitted])],evidence};
+  });
 }
-module.exports={stamp,saveSuggestions,getSuggestion,listSuggestions,applySuggestion,dismissSuggestion,metadataForAi,normalizeScope,candidates};
+module.exports={stamp,captureSnapshot,saveSuggestions,getSuggestion,listSuggestions,applySuggestion,dismissSuggestion,metadataForAi,normalizeScope,candidates,assertDisk};

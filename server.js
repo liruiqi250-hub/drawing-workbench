@@ -8,6 +8,7 @@ const indexer=require('./src/indexer');
 const preview=require('./src/preview');
 const desktop=require('./src/desktop');
 const aiStore=require('./src/ai-store');
+const localRules=require('./src/local-rules');
 const ai=require('./src/ai').createAiService({getSettings:config.getSettings,dataDir:config.DATA_DIR,python:config.PYTHON});
 const HOST='127.0.0.1';
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.pdf':'application/pdf'};
@@ -60,9 +61,11 @@ async function handler(req,res){
     if(route==='/api/status'&&req.method==='GET')return json(res,200,{version:config.VERSION,engine:indexer.engine(),indexing:indexer.status(),stats:store.stats(),settings:config.getSettings(),ai:ai.status(),capabilities:preview.capabilities});
     if(route==='/api/files'&&req.method==='GET')return json(res,200,store.search(Object.fromEntries(url.searchParams)));
     if(route==='/api/settings'&&req.method==='GET')return json(res,200,config.getSettings());
+    if(route==='/api/rules/preview'&&req.method==='POST')return json(res,200,localRules.preview(await body(req)));
+    if(route==='/api/rules/apply'&&req.method==='POST')return json(res,200,localRules.apply(await body(req)));
     if(route==='/api/settings'&&req.method==='PUT'){
       const input=await body(req),old=config.getSettings(),next=config.validateSettings(input,old);
-      if(next.autoStart!==old.autoStart)await desktop.setAutoStart(next.autoStart);
+      if(next.autoStart||next.autoStart!==old.autoStart||'autoStart' in input)await desktop.setAutoStart(next.autoStart);
       // Independent AI settings may be saved while the startup shortcut is awaiting I/O.
       next.ai=config.getSettings().ai;
       const settings=config.saveSettings(next);store.migrateGroups();store.invalidateStats();indexer.configure();return json(res,200,{ok:true,settings,reindexing:true});
@@ -83,11 +86,15 @@ async function handler(req,res){
       const result=await ai.search(input.query,async plan=>{
         requireActiveResponse(res);
         const candidates=aiStore.candidates(plan,scope,settings.candidateLimit,settings.sendPdfText),safe=[];
-        for(const candidate of candidates){const row=await allowedRow(candidate.id);if(!row)continue;snapshots.set(row.id,aiStore.stamp(row));safe.push(aiStore.metadataForAi(row,settings.sendPdfText));}
+        for(const candidate of candidates){
+          const row=await allowedRow(candidate.id);if(!row)continue;
+          let valid=true;for(const evidence of candidate.evidence||[]){const member=await allowedRow(evidence.fileId);if(!member||aiStore.stamp(member)!==evidence.sourceStamp){valid=false;break;}try{aiStore.assertDisk(member);}catch{valid=false;break;}}
+          if(!valid)continue;snapshots.set(row.id,{stamp:aiStore.stamp(row),evidence:candidate.evidence||[],truncatedKeywords:candidate.truncatedKeywords||[]});safe.push(candidate);
+        }
         requireActiveResponse(res);return safe;
       });
       const items=[];
-      for(const match of result.matches){const row=await allowedRow(match.id);if(row&&snapshots.get(row.id)===aiStore.stamp(row))items.push({...store.publicFile(row),aiReason:match.reason});}
+      for(const match of result.matches){const row=await allowedRow(match.id),snapshot=snapshots.get(match.id);if(row&&snapshot?.stamp===aiStore.stamp(row))items.push({...store.publicFile(row),aiReason:match.reason,matchEvidence:snapshot.evidence.map(({sourceStamp,...evidence})=>evidence),evidenceTruncatedKeywords:snapshot.truncatedKeywords});}
       return json(res,200,{items,total:items.length,page:1,limit:Math.max(1,items.length),totalCandidates:result.totalCandidates,plan:result.plan,
         notice:`DeepSeek 扩展检索条件并筛选了 ${result.totalCandidates} 份本机候选；结果受名称、标签及已提取文字覆盖限制。`,usage:result.usage});
     }
@@ -100,7 +107,7 @@ async function handler(req,res){
         // A batch uses existing extracted text, avoiding N sequential 30s preview jobs.
         // Single-PDF extraction may wait for the local preview queue; check the connection before billing.
         if(settings.sendPdfText&&row.extension==='.pdf'&&input.ids.length===1){await preview.ensure(row.id);row=await allowedRow(id);if(!row)throw new Error('图纸在分析前已变化，请重新选择。');}
-        originals.set(id,{...row});files.push(aiStore.metadataForAi(row,settings.sendPdfText));
+        originals.set(id,aiStore.captureSnapshot(row));files.push(aiStore.metadataForAi(row,settings.sendPdfText));
       }
       requireActiveResponse(res);
       const result=await ai.classify(files),suggestions=aiStore.saveSuggestions(result.suggestions,originals);
@@ -144,7 +151,7 @@ async function handler(req,res){
 }
 const server=http.createServer((req,res)=>handler(req,res).catch(e=>{console.error(e);if(!res.headersSent)json(res,500,{error:'服务暂时无法完成请求。'});}));
 server.requestTimeout=60000;server.headersTimeout=10000;
-server.listen(config.PORT,HOST,()=>{fs.writeFileSync(path.join(config.DATA_DIR,'server.pid'),String(process.pid));console.log(`图纸工作台 V${config.VERSION} http://${HOST}:${config.PORT}`);indexer.start();});
+server.listen(config.PORT,HOST,()=>{fs.writeFileSync(path.join(config.DATA_DIR,'server.pid'),String(process.pid));console.log(`图纸工作台 V${config.VERSION} http://${HOST}:${config.PORT}`);indexer.start();if(config.getSettings().autoStart)desktop.setAutoStart(true).catch(error=>console.error('自动启动入口同步失败',error.message));});
 server.on('error',e=>{console.error('服务启动失败',e.message);process.exitCode=1;indexer.stop();store.close();});
 let closing=false;
 function shutdown(){if(closing)return;closing=true;indexer.stop();server.close(()=>{try{store.close();}catch{}process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();}

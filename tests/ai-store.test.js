@@ -23,7 +23,7 @@ test('AI候选同义词OR、主题AND和项目格式待整理scope均在本机�
 });
 test('通配字符和SQL注入按字面查，未授权范围及PDF文字开关有效',()=>{
   const a=fixture('完成100%.pdf');fixture('完成1000.pdf');
-  store.setPreview(a.id,`${a.modified}-${a.size}`,{status:'ready',text:'秘密内容术语',preview:false},a.path);
+  store.setPreview(a.id,store.contentVersion(a),{status:'ready',text:'秘密内容术语',preview:false},a.path);
   assert.deepEqual(aiStore.candidates({groups:[['%']],keywords:[],formats:[]}).map(x=>x.id),[a.id]);
   assert.equal(aiStore.candidates({groups:[['秘密内容术语']],keywords:[],formats:[]},{},60,false).length,0);
   assert.equal(aiStore.candidates({groups:[['秘密内容术语']],keywords:[],formats:[]},{},60,true).length,1);
@@ -37,18 +37,18 @@ test('AI元数据无绝对路径、只取末三级目录、PDF文字限2000字',
 });
 test('建议只入库不自动分类，确认应用写入分类并保持源字节不变',()=>{
   const a=fixture('待整理.dwg'),bytes=fs.readFileSync(a.path);
-  const [s]=aiStore.saveSuggestions([{id:a.id,project:'AI项目',type:'钢架',tags:['测试'],reason:'名称依据',summary:'建议'}],new Map([[a.id,a]]));
+  const [s]=aiStore.saveSuggestions([{id:a.id,project:'AI项目',type:'钢架',tags:['测试'],reason:'名称依据',summary:'建议'}],new Map([[a.id,aiStore.captureSnapshot(a)]]));
   assert.equal(store.getRaw(a.id).classified,0);assert.equal(aiStore.listSuggestions(a.id).length,1);
   const result=aiStore.applySuggestion(s.id,{project:'人工确认项目',type:s.type,tags:s.tags});assert.equal(result.project,'人工确认项目');
   assert.equal(aiStore.listSuggestions(a.id).length,0);assert.deepEqual(fs.readFileSync(a.path),bytes);
 });
 test('真实文件已修改但监听尚未更新时，过期建议也拒绝应用',()=>{
-  const a=fixture('改动.dwg');const [s]=aiStore.saveSuggestions([{id:a.id,project:'旧建议',tags:[]}],new Map([[a.id,a]]));
+  const a=fixture('改动.dwg');const [s]=aiStore.saveSuggestions([{id:a.id,project:'旧建议',tags:[]}],new Map([[a.id,aiStore.captureSnapshot(a)]]));
   fs.appendFileSync(a.path,'changed before watcher');assert.throws(()=>aiStore.applySuggestion(s.id,{project:'旧建议'}),error=>error.status===409);
   assert.equal(store.getRaw(a.id).classified,0);
 });
 test('用户分类变化、范围收窄或图纸删除后拒绝旧建议，忽略无需云调用',()=>{
-  const a=fixture('分类变化.dwg');const [s]=aiStore.saveSuggestions([{id:a.id,project:'AI建议',tags:[]}],new Map([[a.id,a]]));
+  const a=fixture('分类变化.dwg');const [s]=aiStore.saveSuggestions([{id:a.id,project:'AI建议',tags:[]}],new Map([[a.id,aiStore.captureSnapshot(a)]]));
   store.classify(a.id,{project:'用户更新'});assert.equal(aiStore.listSuggestions(a.id)[0].status,'stale');
   assert.throws(()=>aiStore.applySuggestion(s.id,{project:'旧建议'}),error=>error.status===409);
   aiStore.dismissSuggestion(s.id);assert.equal(aiStore.listSuggestions(a.id).length,0);

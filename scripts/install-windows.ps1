@@ -69,6 +69,8 @@ if (-not $ready) {
     Move-Item -LiteralPath (Join-Path $staging 'node') -Destination $runtime
     Move-Item -LiteralPath (Join-Path $staging 'python') -Destination $runtime
 }
+& $node (Join-Path $PSScriptRoot 'sync-startup.js')
+if ($LASTEXITCODE -ne 0) { throw '无法同步自动启动入口，请查看上方错误。原配置和索引保留。' }
 if (-not $NoShortcut) {
     $desktop = [Environment]::GetFolderPath('Desktop')
     $shortcutPath = Join-Path $desktop '图纸工作台.lnk'
@@ -76,7 +78,7 @@ if (-not $NoShortcut) {
     if (Test-Path -LiteralPath $shortcutPath) {
         $existing = $shell.CreateShortcut($shortcutPath)
         if ($existing.Arguments -notlike ('*' + $appDirectory + '*')) {
-            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.1.lnk'
+            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.2.lnk'
         }
     }
     $shortcut = $shell.CreateShortcut($shortcutPath)
@@ -84,9 +86,9 @@ if (-not $NoShortcut) {
     $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $appDirectory '启动图纸工作台.ps1') + '"'
     $shortcut.WorkingDirectory = $appDirectory
     $shortcut.WindowStyle = 7
-    $shortcut.Description = '图纸工作台 V0.5.1'
+    $shortcut.Description = '图纸工作台 V0.5.2'
     $shortcut.Save()
     Write-Host ('已创建桌面快捷方式：' + $shortcutPath)
 }
-Write-Host 'V0.5.1 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
+Write-Host 'V0.5.2 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
 if (-not $NoLaunch) { & (Join-Path $appDirectory '启动图纸工作台.ps1') }

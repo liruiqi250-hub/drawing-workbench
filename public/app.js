@@ -13,7 +13,8 @@
     mode: 'keyword', aiSettings: null, aiStatus: {}, aiDirty: false,
     aiSettingsLoading: false, aiSettingsSaving: false, aiTask: '', aiSearchRevision: 0,
     aiSearchResult: null, aiSearchStale: false, aiDialogRequest: 0,
-    aiSuggestions: [], aiSuggestionDrafts: new Map(), aiLastIds: [], aiDialogLoading: false
+    aiSuggestions: [], aiSuggestionDrafts: new Map(), aiLastIds: [], aiDialogLoading: false,
+    rulesPreview:null,rulesSelections:new Map(),rulesBusy:false,rulesPage:1,rulesApplied:false
   };
 
   function el(tag, className, value) {
@@ -184,7 +185,7 @@
     const connection = $('connection-status');
     connection.className = `connection connected${indexing.running ? ' scanning' : ''}`;
     connection.lastElementChild.textContent = indexing.running ? '本机已连接 · 扫描中' : '本机服务已连接';
-    $('app-version').textContent = `V${String(status.version || '0.5.1').replace(/^v/i, '')}`;
+    $('app-version').textContent = `V${String(status.version || '0.5.2').replace(/^v/i, '')}`;
     if (status.ai) state.aiStatus = { ...state.aiStatus, ...status.ai };
     renderAiControls();
     renderNavigation(stats);
@@ -205,7 +206,7 @@
 
   function renderMaintenance(status) {
     const index = status.indexing || {};
-    $('setting-version').textContent = `V${String(status.version || '0.5.1').replace(/^v/i, '')}`;
+    $('setting-version').textContent = `V${String(status.version || '0.5.2').replace(/^v/i, '')}`;
     $('setting-engine').textContent = status.engine || '—';
     $('setting-total').textContent = `${number(status.stats?.groupTotal)} 组图纸 · ${number(status.stats?.physicalTotal)} 个原始文件 · ${number(status.stats?.versionGroups)} 组含多个版本`;
     $('grouping-summary').textContent = `已归为 ${number(status.stats?.groupTotal)} 组，保留 ${number(status.stats?.physicalTotal)} 个原始文件。其中 ${number(status.stats?.backupFileCount)} 个文件标有备份来源或时间戳。`;
@@ -270,6 +271,18 @@
     return params;
   }
 
+  function clearSelection(message='当前结果没有选中的图纸') {
+    if(state.selectedId&&state.drafts.get(state.selectedId)?.dirty)notice('未保存的分类草稿已保留；重新打开原图可继续编辑。');
+    ++state.detailRequest;state.selectedId=null;state.selectedFile=null;
+    errorFor('detail','');errorFor('action','');
+    $('detail').replaceChildren(el('div','detail-top','图纸详情'),el('div','detail-empty',message));
+  }
+  function reconcileSelection() {
+    const current=state.selectedFile;
+    const present=state.items.some(file=>file.id===state.selectedId||(state.grouped&&current?.group?.id&&file.group?.id===current.group.id&&file.classification?.variants?.some(member=>member.fileId===state.selectedId)));
+    if(!present){clearSelection(state.items.length?'选择当前结果中的图纸':'当前搜索没有匹配图纸');if(state.items.length)selectFile(state.items[0].id);}
+    else refreshSelectedDetail();
+  }
   async function loadFiles({ quiet = false } = {}) {
     if (state.mode !== 'keyword') return;
     const request = ++state.fileRequest;
@@ -277,6 +290,7 @@
     state.filesLoading = true;
     renderAiControls();
     if (!quiet) {
+      clearSelection('正在按当前搜索条件更新图纸…');
       $('result-count').textContent = '正在搜索…';
       $('results').setAttribute('aria-busy', 'true');
     }
@@ -291,15 +305,15 @@
       const maxPage = Math.max(1, Math.ceil(state.total / state.limit));
       if (state.page > maxPage) { state.page = maxPage; loadFiles(); return; }
       const signature = JSON.stringify([state.items, state.total, state.page, state.limit]);
-      if (signature !== state.filesSignature) {
+      if (signature !== state.filesSignature || !quiet) {
         state.filesSignature = signature;
         renderResults();
-        refreshSelectedDetail();
+        reconcileSelection();
       } else renderPageSummary();
       state.lastResultRefresh = Date.now();
       $('last-refresh').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
       errorFor('files', '');
-      if (!state.selectedId && state.items.length && !quiet) selectFile(state.items[0].id);
+      if(!state.items.length&&state.selectedId)clearSelection('当前搜索没有匹配图纸');
     } catch (error) {
       if (request !== state.fileRequest || state.mode !== 'keyword') return;
       errorFor('files', error.message);
@@ -355,6 +369,7 @@
     }
     $('results').replaceChildren(...state.items.map(file => {
       const button = actionButton('', () => selectFile(file.id), `file-row${file.id === state.selectedId ? ' selected' : ''}`);
+      let evidencePanel=null;
       button.dataset.fileId = String(file.id);
       button.setAttribute('aria-pressed', String(file.id === state.selectedId));
       const format = el('span', 'format-icon', formatOf(file));
@@ -366,7 +381,7 @@
       const naming = file.naming || {};
       if(file.group?.versionCount>1)tags.append(el('span','tag version',`${file.group.versionCount} 个版本 · ${file.group.backupCount} 个备份`));
       if(file.group&&!file.group.hasOriginal)tags.append(el('span','tag backup','仅找到备份'));
-      if (pending(file)) tags.append(el('span', 'tag pending', '待整理'));
+      if (pending(file)) tags.append(el('span', 'tag pending', file.classification?.conflict?'分类冲突 · 待处理':'待整理'));
       if (naming.projectKind === 'exhibition') tags.append(el('span', 'tag project-kind', naming.exhibitionName || '展会项目'));
       if (naming.isBackup) {
         const backup = el('span', 'tag backup', backupLabel(naming));
@@ -387,7 +402,9 @@
         text.append(el('div', 'rule-hint', `本机规则建议：${[file.suggestion.project, file.suggestion.type].filter(Boolean).join(' / ')}`));
       }
       if (state.mode === 'ai' && file.aiReason) text.append(el('div', 'ai-reason', `相关理由：${file.aiReason}`));
+      if(state.mode==='ai'&&file.matchEvidence?.length){const evidence=el('details','match-evidence');evidence.append(el('summary','','查看实际命中版本与证据'));file.matchEvidence.forEach(v=>{evidence.append(el('strong','small',`${v.isBackup?'备份':'原图'}：${v.name}`));(v.matches||[]).forEach(m=>evidence.append(el('p','small',`${({name:'名称',folder:'目录片段',project:'项目',type:'类型',tags:'标签',naming:'图号信息',text:'PDF文字',groupProject:'整组共同项目',groupType:'整组共同类型',groupTags:'整组共同标签'})[m.field]||m.field}：${m.snippet}`)));});if(file.evidenceTruncatedKeywords?.length)evidence.append(el('p','notice','部分可选词命中证据超过本次容量，未展开：'+file.evidenceTruncatedKeywords.join('，')));evidencePanel=evidence;}
       button.append(format, text);
+      if(evidencePanel){const wrapper=el('div','ai-result-with-evidence');wrapper.append(button,evidencePanel);return wrapper;}
       return button;
     }));
   }
@@ -429,8 +446,8 @@
     const current = state.selectedFile;
     if (!current || state.drafts.get(current.id)?.dirty || $('detail').contains(document.activeElement)) return;
     const indexed = state.items.find(file => file.id === current.id)||state.items.find(file=>file.group?.id===current.group?.id);
-    if (!indexed) return;
-    const fields = ['name', 'path', 'extension', 'size', 'modified', 'project', 'type', 'tags', 'contentStatus', 'previewStatus', 'suggestion', 'naming', 'exists','group'];
+    if (!indexed) { reconcileSelection(); return; }
+    const fields = ['name', 'path', 'extension', 'size', 'modified', 'project', 'type', 'tags', 'contentStatus', 'previewStatus', 'suggestion', 'naming', 'exists','group','classification','contentVersion'];
     if (indexed.id===current.id?fields.every(key => JSON.stringify(indexed[key]) === JSON.stringify(current[key])):JSON.stringify(indexed.group)===JSON.stringify(current.group)) return;
     const request = state.detailRequest;
     try {
@@ -458,7 +475,7 @@
     } else if (format === 'PDF') {
       const image = el('img');
       image.alt = `PDF 首页预览：${file.name}`;
-      image.src = `/api/files/${id}/preview?v=${encodeURIComponent(file.modified || '')}`;
+      image.src = `/api/files/${id}/preview?v=${encodeURIComponent(file.contentVersion || file.modified || '')}`;
       caption.append(el('span', '', 'PDF 首页预览'));
       const link = el('a', '', '查看完整 PDF');
       link.href = `/api/files/${id}/raw`; link.target = '_blank'; link.rel = 'noopener'; caption.append(link);
@@ -470,7 +487,7 @@
       caption.textContent = format === 'DWG' ? '原文件内嵌缩略图，清晰度取决于原文件' : '本机生成的真实文件预览';
       const image = el('img');
       image.alt = `图纸预览：${file.name}`;
-      image.src = `/api/files/${id}/preview?v=${encodeURIComponent(file.modified || '')}`;
+      image.src = `/api/files/${id}/preview?v=${encodeURIComponent(file.contentVersion || file.modified || '')}`;
       image.addEventListener('error', () => {
         caption.textContent = `${format} 格式 · 未生成预览`;
         placeholder('暂无此格式的页面预览，可使用下方“打开原文件”查看。');
@@ -528,6 +545,8 @@
       row.append(el('strong','',role),el('div','version-name',version.name));
       const date=version.backupTimestamp?`备份时间 ${backupTime(version.backupTimestamp)}`:`修改时间 ${formattedDate(version.modified)}`;
       row.append(el('div','small',`${date} · ${bytes(version.size)}`),el('div','version-path',version.path));
+      const legacy=version.versionClassification||{};
+      if(legacy.classified||legacy.project||legacy.type||legacy.tags?.length)row.append(el('p','small',`此版本原有人工分类（保留）：${legacy.project||'未设项目'} / ${legacy.type||'未设类型'}；标签 ${(legacy.tags||[]).join('，')||'无'}`));
       if(version.isBackup&&(version.ruleName||version.basis))row.append(el('div','small',version.ruleName||version.basis));
       const actions=el('div','detail-actions');
       const view=actionButton(version.id===file.id?'正在查看':'查看此版本',()=>selectFile(version.id));view.disabled=version.id===file.id;
@@ -535,6 +554,18 @@
       ['open','locate'].forEach(action=>{const button=actionButton(action==='open'?'打开':'定位',()=>fileAction(version,action,button));actions.append(button);});
       row.append(actions);box.append(row);
     });
+    return box;
+  }
+
+  function renderClassificationHistory(file){
+    const value=file.classification||{},box=el('section',value.conflict?'classification-conflict':'classification-info');
+    box.setAttribute('aria-label','整组分类状态');
+    box.append(el('strong','',value.conflict?'组分类存在冲突 · 待处理':file.classified?'整组已整理':'整组待整理'),el('p','small','项目、类型和共同标签属于整组；文件名、路径、修改时间、正文和原有人工分类属于各版本。'));
+    if(value.conflict){
+      box.append(el('p','','下面保留全部来源值；请核对后在共同分类栏明确确认，不会自动用原图覆盖备份分类。'));
+      const choices=[...(value.confirmedVariants||[]),...(value.variants||[]).filter(v=>v.classified||v.project||v.type||v.tags?.length)];
+      choices.forEach(v=>box.append(el('p','small',`${v.name||'已确认共同分类'}：${v.project||'未设项目'} / ${v.type||'未设类型'}；标签 ${(v.tags||[]).join('，')||'无'}`)));
+    }
     return box;
   }
 
@@ -546,6 +577,7 @@
     const information = el('div', 'detail-information');
     information.append(el('h2', 'detail-name', file.name));
     information.append(renderVersions(file));
+    information.append(renderClassificationHistory(file));
     const data = el('dl', 'detail-data');
     [['项目', file.project || '待确认'], ['类型', file.type || '待确认'], ['格式', formatOf(file)], ['修改时间', formattedDate(file.modified)], ['文件大小', bytes(file.size)], ['内容状态', contentLabel(file)]].forEach(([label, value]) => data.append(el('dt', '', label), el('dd', '', value)));
     information.append(data, renderNaming(file));
@@ -583,10 +615,10 @@
       information.append(box);
     }
     const form = el('form', 'classify-form');
-    form.append(el('h3', '', '手工分类与标签'));
+    form.append(el('h3', '', '整组共同分类与标签'),el('p','small','保存应用于这组原图和备份。各版本原有人工分类保留在版本详情中，不静默覆盖。'));
     [['project', '项目', '输入项目名称'], ['type', '图纸类型', '输入类型名称'], ['tags', '标签', '多个标签用逗号分隔']].forEach(([key, label, placeholder]) => {
       const input = el('input');
-      input.type = 'text'; input.value = draft[key]; input.placeholder = placeholder; input.maxLength = key === 'tags' ? 1000 : 120;
+      input.type = 'text'; input.value = draft[key]; input.placeholder = placeholder; input.maxLength = key === 'tags' ? 5100 : 120;
       input.setAttribute('aria-label', label); input.autocomplete = 'off';
       input.addEventListener('input', () => { draft[key] = input.value; draft.dirty = true; });
       const field = el('label', '', label); field.append(input); form.append(field);
@@ -599,6 +631,7 @@
       notice('分类输入已清空；至少填写项目或类型中的一项后再保存。');
     }));
     form.append(classifyActions, el('p', 'classify-note', '至少填写项目或类型中的一项。保存只更新本地索引中的分类标签，原图位置和内容不变。'));
+    if(file.classification?.conflict){const checkbox=el('input');checkbox.type='checkbox';checkbox.checked=draft.resolveConflict===true;checkbox.addEventListener('change',()=>{draft.resolveConflict=checkbox.checked;draft.dirty=true;});const label=el('label','check-row');label.append(checkbox,el('span','','我已核对版本差异，确认以上整组共同分类；版本原值仍保留'));form.append(label);}
     form.addEventListener('submit', event => { event.preventDefault(); saveClassification(file, draft, submit, formError); });
     information.append(form);
     if (file.contentSnippet) {
@@ -621,7 +654,7 @@
   async function saveClassification(file, draft, button, formError) {
     const payload = {
       project: draft.project.trim(), type: draft.type.trim(),
-      tags: [...new Set(draft.tags.split(/[,，;；\n]+/).map(value => value.trim()).filter(Boolean))]
+      tags: [...new Set(draft.tags.split(/[,，;；\n]+/).map(value => value.trim()).filter(Boolean))],scope:'group',resolveConflict:draft.resolveConflict===true
     };
     if (!payload.project && !payload.type) {
       formError.textContent = '请至少填写项目或类型中的一项。'; formError.hidden = false; return;
@@ -656,6 +689,7 @@
     return [total != null ? `总计 ${number(total)} tokens` : '', input != null ? `输入 ${number(input)}` : '', output != null ? `输出 ${number(output)}` : ''].filter(Boolean).join(' · ') || '服务未返回用量';
   }
   function renderAiControls() {
+    $('local-rules-button').disabled=state.mode!=='keyword'||state.filesLoading;
     const busy = aiBusy();
     const statusText = !state.aiStatus.configured ? 'DeepSeek 未配置密钥' : !state.aiStatus.enabled ? 'DeepSeek 已配置 · 未启用' : busy ? 'DeepSeek 正在处理任务' : `DeepSeek 已启用 · ${state.aiStatus.model || state.aiSettings?.model || 'deepseek-flash'}`;
     $('ai-short-status').textContent = statusText;
@@ -695,6 +729,7 @@
   }
   function aiSnapshot() { return JSON.stringify([state.mode, $('query').value.trim(), currentAiScope()]); }
   function invalidateAiSearch(message) {
+    clearSelection('自然语言查询或范围已变化，请重新搜索。');
     ++state.aiSearchRevision; ++state.fileRequest;
     state.filesLoading = false; state.aiSearchStale = true; state.aiSearchResult = null;
     state.items = []; state.total = 0; state.page = 1; state.filesSignature = '';
@@ -733,6 +768,7 @@
     state.query = query;
     const request = ++state.aiSearchRevision, snapshot = aiSnapshot();
     state.aiTask = 'search'; state.aiSearchStale = false; state.aiSearchResult = null;
+    clearSelection('正在按当前自然语言查询查找图纸…');
     state.items = []; state.total = 0; state.page = 1;
     $('result-count').textContent = 'DeepSeek 正在制定检索计划并排列候选…';
     $('results').replaceChildren(el('div', 'empty', '正在分析当前查询与本机候选，最长等待约 100 秒…'));
@@ -742,7 +778,7 @@
       if (request !== state.aiSearchRevision || snapshot !== aiSnapshot() || state.mode !== 'ai') return;
       state.aiSearchResult = result; state.items = Array.isArray(result.items) ? result.items : [];
       state.total = state.items.length; state.page = 1;
-      renderResults(); renderAiSearchInfo(result);
+      renderResults(); reconcileSelection(); renderAiSearchInfo(result);
       $('last-refresh').textContent = `AI 查询于 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
       $('ai-usage').textContent = `最近 AI 搜索：${usageText(result.usage)}`;
       if (state.items.length) selectFile(state.items[0].id);
@@ -895,16 +931,25 @@
     const root = $('ai-suggestions-body'); root.replaceChildren();
     if (!state.aiSuggestions.length) { root.append(el('div', 'empty', '没有待审 AI 建议。')); return; }
     state.aiSuggestions.forEach(suggestion => {
-      if (!state.aiSuggestionDrafts.has(suggestion.id)) state.aiSuggestionDrafts.set(suggestion.id, { project: suggestion.project || '', type: suggestion.type || '', tags: (suggestion.tags || []).join('，'), dirty: false });
+      if (!state.aiSuggestionDrafts.has(suggestion.id)) state.aiSuggestionDrafts.set(suggestion.id, { project: suggestion.project || suggestion.existingClassification?.project || '', type: suggestion.type || suggestion.existingClassification?.type || '', tags: [...new Set([...(suggestion.existingClassification?.tags||[]),...(suggestion.tags||[])])].join('，'), dirty: false,confirmTagRemoval:false,resolveConflict:false });
       const draft = state.aiSuggestionDrafts.get(suggestion.id), card = el('section', 'ai-suggestion-card');
       card.append(el('h3', '', suggestion.name || `图纸 ${suggestion.fileId}`), el('p', 'small break-anywhere', suggestion.path || ''), el('p', 'ai-reason', `判断理由：${suggestion.reason || '服务未提供理由'}`));
-      if (suggestion.rulesVersion && !['0.3.1','0.4.0','0.5.0','0.5.1'].includes(suggestion.rulesVersion)) card.append(el('p', 'notice', `这条建议生成于 V${String(suggestion.rulesVersion).replace(/^v/i, '')}，尚未参考图号规则；可手动重新分析。`));
+      if (suggestion.rulesVersion && !['0.3.1','0.4.0','0.5.0','0.5.1','0.5.2'].includes(suggestion.rulesVersion)) card.append(el('p', 'notice', `这条建议生成于 V${String(suggestion.rulesVersion).replace(/^v/i, '')}，尚未参考图号规则；可手动重新分析。`));
       if (suggestion.summary) card.append(el('p', 'small', suggestion.summary));
       const form = el('form', 'ai-suggestion-form');
       [['project', '项目'], ['type', '图纸类型'], ['tags', '标签（逗号分隔）']].forEach(([key, label]) => {
-        const field = el('label', '', label), input = el('input'); input.type = 'text'; input.value = draft[key]; input.maxLength = key === 'tags' ? 1000 : 120;
-        input.autocomplete = 'off'; input.addEventListener('input', () => { draft[key] = input.value; draft.dirty = true; }); field.append(input); form.append(field);
+        const field = el('label', '', label), input = el('input'); input.type = 'text'; input.value = draft[key]; input.maxLength = key === 'tags' ? 7100 : 120;
+        input.autocomplete = 'off'; input.addEventListener('input', () => { draft[key] = input.value; draft.dirty = true; if(key==='tags'){draft.confirmTagRemoval=false;renderTagDifference();} }); field.append(input); form.append(field);
       });
+      const tagDifference=el('div','tag-difference');
+      function renderTagDifference(){
+        tagDifference.replaceChildren(el('p','small','默认合并完整人工标签；模型没有返回的标签不会自动删除。'));
+        const edited=draft.tags.split(/[,，;；\n]+/).map(v=>v.trim()).filter(Boolean);
+        const removed=(suggestion.existingClassification?.tags||[]).filter(tag=>!edited.includes(tag));
+        if(removed.length){tagDifference.append(el('p','notice',`输入中移除的人工标签（${removed.length}）：${removed.join('，')}`));const checkbox=el('input');checkbox.type='checkbox';checkbox.checked=draft.confirmTagRemoval===true;checkbox.addEventListener('change',()=>{draft.confirmTagRemoval=checkbox.checked;});const label=el('label','check-row');label.append(checkbox,el('span','','确认删除上面明确列出的人工标签；未勾选则保留它们'));tagDifference.append(label);}
+      }
+      renderTagDifference();form.append(tagDifference);
+      if(suggestion.existingClassification?.conflict){form.append(renderClassificationHistory({classification:suggestion.existingClassification}));const checkbox=el('input');checkbox.type='checkbox';checkbox.addEventListener('change',()=>{draft.resolveConflict=checkbox.checked;});const label=el('label','check-row');label.append(checkbox,el('span','','已核对组内分类冲突，确认以上共同分类（各版本原值保留）'));form.append(label);}
       const errorBox = el('div', 'form-error'); errorBox.hidden = true; form.append(errorBox);
       const actions = el('div', 'field-actions'), apply = el('button', 'primary', '确认保存这份分类'); apply.type = 'submit';
       const dismiss = actionButton('忽略建议', () => saveAiSuggestion(suggestion, draft, form, errorBox, false));
@@ -914,7 +959,7 @@
     });
   }
   async function saveAiSuggestion(suggestion, draft, form, errorBox, apply) {
-    const payload = { project: draft.project.trim(), type: draft.type.trim(), tags: [...new Set(draft.tags.split(/[,，;；\n]+/).map(value => value.trim()).filter(Boolean))] };
+    const payload = { project: draft.project.trim(), type: draft.type.trim(), tags: [...new Set(draft.tags.split(/[,，;；\n]+/).map(value => value.trim()).filter(Boolean))],confirmTagRemoval:draft.confirmTagRemoval===true,resolveConflict:draft.resolveConflict===true };
     if (apply && !payload.project && !payload.type) { errorBox.textContent = '请至少填写项目或类型中的一项。'; errorBox.hidden = false; return; }
     const controls = [...form.querySelectorAll('input,button')]; controls.forEach(control => { control.disabled = true; }); errorBox.hidden = true;
     try {
@@ -934,6 +979,53 @@
     finally { controls.forEach(control => { control.disabled = false; }); }
   }
   function closeAiSuggestions() { ++state.aiDialogRequest; state.aiDialogLoading = false; $('ai-suggestions-dialog').close(); }
+
+  function renderRuleSelection(){
+    const items=state.rulesPreview?.items||[],chosen=items.filter(item=>state.rulesSelections.get(item.id)?.checked);
+    const unresolved=chosen.some(item=>item.conflict&&!state.rulesSelections.get(item.id).resolveConflict);
+    $('local-rules-apply').disabled=state.rulesBusy||!chosen.length||unresolved;
+    $('local-rules-apply').textContent=`确认所选 ${chosen.length} 组分类`;
+    $('local-rules-summary').textContent=`范围共 ${number(state.rulesPreview?.total)} 组 · 本批 ${items.length} 组 · 冲突 ${items.filter(item=>item.conflict).length} 组${unresolved?' · 所选冲突需明确复核':''}`;
+  }
+  function renderRulePreview(){
+    const root=$('local-rules-body');root.replaceChildren();state.rulesSelections.clear();
+    (state.rulesPreview?.items||[]).forEach(item=>{
+      const decision={checked:item.actionable&&!item.conflict,resolveConflict:false};state.rulesSelections.set(item.id,decision);
+      const card=el('section',item.conflict?'ai-suggestion-card classification-conflict':'ai-suggestion-card');
+      const checkbox=el('input');checkbox.type='checkbox';checkbox.checked=decision.checked;checkbox.disabled=!item.actionable;checkbox.setAttribute('aria-label',`选择 ${item.name}`);checkbox.addEventListener('change',()=>{decision.checked=checkbox.checked;renderRuleSelection();});
+      const heading=el('label','check-row');heading.append(checkbox,el('strong','',item.name));card.append(heading);
+      card.append(el('p','small',`已有：${item.current.project||'未设项目'} / ${item.current.type||'未设类型'}；标签 ${(item.current.tags||[]).join('，')||'无'}`));
+      card.append(el('p','',`规则建议：${item.suggestion.project||'项目待确认'} / ${item.suggestion.type||'类型待确认'}；追加标签 ${(item.suggestion.tags||[]).join('，')||'无'}`));
+      card.append(el('p','small',(item.suggestion.reasons||[]).join('；')));
+      if(item.conflicts?.length){const list=el('ul');item.conflicts.forEach(value=>list.append(el('li','',value)));card.append(list);}
+      if(item.current?.conflict)card.append(renderClassificationHistory({classification:item.current}));
+      if(item.conflict&&item.actionable){const resolve=el('input');resolve.type='checkbox';resolve.setAttribute('aria-label',`确认冲突 ${item.name}`);resolve.addEventListener('change',()=>{decision.resolveConflict=resolve.checked;renderRuleSelection();});const label=el('label','check-row');label.append(resolve,el('span','','已核对差异，明确采用本组规则建议替换冲突共同值（版本原值保留）'));card.append(label);}
+      const versions=el('details');versions.append(el('summary','','查看各版本规则依据'));(item.versionSuggestions||[]).forEach(v=>versions.append(el('p','small',`${v.name}：${v.project||'未设项目'} / ${v.type||'未设类型'}；${(v.reasons||[]).join('；')}`)));card.append(versions);
+      if(!item.actionable)card.append(el('p','notice','建议不完整或标签超限，请打开图纸详情人工处理。'));
+      root.append(card);
+    });
+    if(!state.rulesPreview?.items.length)root.append(el('div','empty','当前范围没有可预览的图纸组。'));
+    renderRuleSelection();
+  }
+  async function previewRules(page=1){
+    if(state.rulesBusy)return;state.rulesBusy=true;state.rulesPreview=null;state.rulesSelections.clear();$('local-rules-error').hidden=true;$('local-rules-body').replaceChildren(el('p','','正在生成本机规则预览…'));renderRuleSelection();
+    try{state.rulesPage=page;state.rulesApplied=false;state.rulesPreview=await api('/api/rules/preview',{method:'POST',body:{scope:currentAiScope(),query:state.query,includeClassified:$('local-rules-include').checked,limit:Number($('local-rules-limit').value),page}});state.rulesPage=state.rulesPreview.page;renderRulePreview();}
+    catch(error){$('local-rules-error').textContent=error.message;$('local-rules-error').hidden=false;}
+    finally{state.rulesBusy=false;renderRuleSelection();}
+  }
+  async function applyRules(){
+    if(state.rulesBusy||!state.rulesPreview)return;
+    const selections=state.rulesPreview.items.filter(item=>state.rulesSelections.get(item.id)?.checked).map(item=>({id:item.id,stamp:item.stamp,resolveConflict:state.rulesSelections.get(item.id).resolveConflict}));
+    if(!selections.length)return;state.rulesBusy=true;renderRuleSelection();$('local-rules-error').hidden=true;
+    try{
+      const result=await api('/api/rules/apply',{method:'POST',body:{previewId:state.rulesPreview.previewId,selections}});
+      $('local-rules-body').replaceChildren(el('p','ai-resolved',`已确认 ${result.applied} 组共同分类。点击“预览下一批”继续；原文件和版本原值保留。`));
+      state.rulesSelections.clear();notice(`本机规则已整理 ${result.applied} 组，未调用 AI。`);await refreshStatus();await loadFiles({quiet:true});
+      state.rulesApplied=true;
+    }catch(error){$('local-rules-error').textContent=error.message;$('local-rules-error').hidden=false;}
+    finally{state.rulesBusy=false;renderRuleSelection();}
+  }
+  function openLocalRules(){if(state.mode!=='keyword')return;$('local-rules-dialog').showModal();$('local-rules-scope').textContent=`当前范围：${scopeTitle()}${state.query?'；关键词：'+state.query:''}。整组共同分类；每批最多50组，冲突需单独确认。`;previewRules();}
 
   function lines(value) { return [...new Set(value.split(/\r?\n/).map(item => item.trim().replace(/^"|"$/g, '')).filter(Boolean))]; }
   function settingsChanged(event) {
@@ -1120,6 +1212,12 @@
     openAiSuggestions(files.map(file => file.id), true);
   });
   $('ai-settings-section').addEventListener('input', aiSettingsChanged);
+  $('local-rules-button').addEventListener('click',openLocalRules);
+  $('local-rules-close').addEventListener('click',()=>{if(!state.rulesBusy)$('local-rules-dialog').close();});
+  $('local-rules-dialog').addEventListener('cancel',event=>{if(state.rulesBusy)event.preventDefault();});
+  $('local-rules-refresh').addEventListener('click',()=>previewRules(1));
+  $('local-rules-next').addEventListener('click',()=>previewRules(!$('local-rules-include').checked&&state.rulesApplied?1:state.rulesPage+1));
+  $('local-rules-apply').addEventListener('click',applyRules);
   $('ai-settings-section').addEventListener('change', aiSettingsChanged);
   $('ai-settings-form').addEventListener('submit', saveAiSettings);
   $('ai-test-button').addEventListener('click', testAiConnection);

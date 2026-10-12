@@ -40,7 +40,7 @@ function strings(value, count, max, label) {
   return [...new Set(value.map(item => string(item, max, label, false)))];
 }
 
-function safeMetadata(file, sendPdfText) {
+function safeMetadata(file, sendPdfText, allowEvidence=true) {
   if (!file || typeof file.id !== 'string' || !file.id || file.id.length > 100 ||
       typeof file.name !== 'string' || typeof file.format !== 'string' ||
       !/^\.?[A-Za-z0-9]{1,12}$/.test(file.format)) {
@@ -90,6 +90,15 @@ function safeMetadata(file, sendPdfText) {
     }
   }
   if (sendPdfText && metadata.format === 'PDF' && typeof file.text === 'string') metadata.text = localText(file.text, 2000);
+  if(allowEvidence&&Array.isArray(file.evidence)){
+    metadata.evidenceTruncatedKeywords=(Array.isArray(file.truncatedKeywords)?file.truncatedKeywords:[]).slice(0,12).map(term=>localText(term,60));
+    metadata.evidence=file.evidence.slice(0,9).map(evidence=>{
+      const version=safeMetadata({...evidence,id:evidence.fileId},sendPdfText,false);
+      const matches=(Array.isArray(evidence.matches)?evidence.matches:[]).filter(match=>['name','folder','project','type','tags','naming','groupProject','groupType','groupTags',...(sendPdfText?['text']:[])].includes(match.field)).slice(0,8).map(match=>({field:match.field,terms:(Array.isArray(match.terms)?match.terms:[]).slice(0,8).map(term=>localText(term,60)),snippet:localText(match.snippet,240)}));
+      const group=evidence.groupClassification;
+      return {...version,fileId:version.id,isBackup:evidence.isBackup===true,matches,evidenceOrigin:['version','group','mixed','scope'].includes(evidence.evidenceOrigin)?evidence.evidenceOrigin:'version',...(group?{groupClassification:{project:localText(group.project,120),type:localText(group.type,120),tags:(group.tags||[]).slice(0,20).map(tag=>localText(tag,60)),source:localText(group.source,40)}}:{})};
+    });
+  }
   return metadata;
 }
 
@@ -314,7 +323,7 @@ function createAiService({getSettings, dataDir, python, transport = globalThis.f
       if (!metadata.length) return {matches: [], plan, totalCandidates: 0, usage};
       const ranked = await completion(apiKey, current, usage,
         '你是图纸相关性排序助手。仅从提供的候选中选择相关图纸并按相关性排序。只能返回候选已有id，不能生成其他id；每个id最多出现一次。reason最多300字，指出具体元数据依据，信息不足时明示；不编造图纸内容、尺寸或制造结论。naming 是本机按用户命名规则确定的字段：orderDate 是下单日期，orderBatch 是订单项目批次，productionSerial 保留生产序号及未经解释的追加段。备份时间戳不是下单日期，isBackup 仅是来源标记，不能推断已过期、可删除或与其他图纸相同。区分用户指定的订单批次、日期、序号、产品和尺寸；尺寸注明背高/翼展/半身时不要当总长。无匹配可返回空数组。json格式示例：{"matches":[{"id":"候选id","reason":"文件名包含钢架"}]}。',
-        {query: query.trim(), candidates: metadata}, Math.min(16000, Math.max(1000, metadata.length * 140)));
+        {query: query.trim(), candidates: metadata, evidenceGuide:'候选id代表搜索显示的原图，evidence是组内实际命中的版本。请依据evidence.matches里的字段/片段判断，并在reason注明原图或备份名称。不能因为代表原图未含某标签就忽略备份的真实命中依据。'}, Math.min(16000, Math.max(1000, metadata.length * 140)));
       object(ranked, ['matches'], '搜索结果');
       if (!Array.isArray(ranked.matches) || ranked.matches.length > metadata.length) throw aiError('AI 返回搜索结果数量超出候选范围。');
       const seen = new Set();
@@ -338,7 +347,7 @@ function createAiService({getSettings, dataDir, python, transport = globalThis.f
       if (allowedIds.size !== metadata.length) throw aiError('待分析图纸 ID 重复。', 400);
       const result = await completion(apiKey, current, usage,
         '你是图纸分类建议助手。对每个输入图纸返回一项供用户审查的建议，只能使用输入已有id且每id一次。project/type最多120字，tags最多20个、每个最多60字，reason最多300字，summary最多500字。naming 是本机按用户命名规则确定的字段，优先使用明确字段，不从其他信息补造。已有非空project/type保持原值，已有tags保留，可建议追加确定的标签，用户确认后才保存。没有已有project时：projectKind=exhibition优先用具体exhibitionName，无具体名称统一建议展会项目；否则projectKind=order用orderBatch作为订单项目，如26-10.29或22-10.11B。同一日期的不同生产单序号属于同批次项目；不要把完整图号、产品名或尺寸当项目。drawingNumber、orderDate、productionSerial、productName、productSize可作标签；层级追加数字段含义未确认，不擅自解释。展会霸王龙3米和展会样式不等于霸王龙展会，不造展会名称。共享、订单CAD、DWG恐龙钢架机械图纸、盘符及年月等通用父目录不作项目。备份时间戳、目录年份、修改时间不作下单日期；isBackup只标明备份来源，不能推断过期或可删除。背高、翼展、半身、多个尺寸保留原意并提示核对。其他字段根据明确文件名、末级目录与已有分类作保守建议；不确定的project/type留空，不编造型号、尺寸、订单或技术参数。reason说明依据和不确定处，summary只概括已提供信息。只返回 json 示例：{"suggestions":[{"id":"输入id","project":"","type":"钢架结构","tags":["钢架"],"reason":"文件名包含钢架，待人工确认","summary":"钢架相关图纸"}]}。',
-        {files: metadata}, Math.min(16000, Math.max(1600, metadata.length * 1100)));
+        {files: metadata,tagPolicy:'tags 是建议追加项。客户端保留完整人工标签，模型收到的有界标签片段不能代表可删除的全部标签。'}, Math.min(16000, Math.max(1600, metadata.length * 1100)));
       object(result, ['suggestions'], '分类建议');
       if (!Array.isArray(result.suggestions) || result.suggestions.length !== metadata.length) throw aiError('AI 返回分类建议数量与输入图纸不一致，本次结果已拒绝。');
       const seen = new Set();

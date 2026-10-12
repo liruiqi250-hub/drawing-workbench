@@ -11,7 +11,7 @@ const CONFIG_PATH = path.join(DATA_DIR, 'settings.json');
 const defaults = () => ({
   roots: process.env.DRAWING_WORKBENCH_ROOTS ? JSON.parse(process.env.DRAWING_WORKBENCH_ROOTS) : (process.platform==='win32' ? Array.from({length:24},(_,i)=>String.fromCharCode(67+i)+':'+path.sep).filter(p=>fs.existsSync(p)) : [require('node:os').homedir()]),
   extensions: ['.dwg','.dxf','.pdf','.dwt','.dgn','.step','.stp','.iges','.igs','.sldprt','.sldasm','.slddrw'],
-  excludeDirs: ['Windows','Program Files','Program Files (x86)','ProgramData','$Recycle.Bin','System Volume Information','AppData','node_modules','.git','.venv','venv','$WinREAgent','Recovery','MSOCache','Config.Msi'],
+  excludeDirs: ['Windows','Program Files','Program Files (x86)','ProgramData','$Recycle.Bin','System Volume Information','AppData','node_modules','.git','.test-tmp','.venv','venv','$WinREAgent','Recovery','MSOCache','Config.Msi'],
   watch: true, rescanMinutes:30, pageSize:50, autoStart:false,
   versionGrouping:true, groupingRules:[],
   classificationRules:[
@@ -107,7 +107,11 @@ function contained(p,root){const relative=path.relative(root,p);return relative=
 function isExcluded(p,s=getSettings()){
   if(contained(p,DATA_DIR)||contained(p,path.join(APP_DIR,'runtime'))||contained(p,path.join(APP_DIR,'cache'))||contained(p,path.join(APP_DIR,'data'))||contained(p,path.join(APP_DIR,'vendor'))||contained(p,path.join(APP_DIR,'logs')))return true;
   const parts=path.resolve(p).toLowerCase().split(/[\\/]/);
-  return s.excludeDirs.some(x=>path.isAbsolute(x)?contained(p,path.resolve(x)):parts.includes(x.toLowerCase()));
+  return s.excludeDirs.some(x=>{
+    if(path.isAbsolute(x))return contained(p,path.resolve(x));
+    if(x.toLowerCase()==='.test-tmp'&&s.roots.some(root=>contained(p,root)&&path.resolve(root).toLowerCase().split(/[\\/]/).includes('.test-tmp')))return false;
+    return parts.includes(x.toLowerCase());
+  });
 }
 function isAllowed(p,s=getSettings(),checkExtension=true){return s.roots.some(r=>contained(p,r))&&!isExcluded(p,s)&&(!checkExtension||s.extensions.includes(path.extname(p).toLowerCase()));}
 module.exports={APP_DIR,DATA_DIR,CONFIG_PATH,VERSION,PORT,PYTHON,getSettings,saveSettings,validateSettings,validateAiSettings,pathKey,contained,isExcluded,isAllowed};
