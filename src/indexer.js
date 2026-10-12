@@ -8,6 +8,7 @@ const readline=require('node:readline');
 const state={running:false,scanned:0,found:0,errors:0,currentRoot:'',startedAt:null,finishedAt:null,lastEventAt:null,watching:[],watchErrors:[],errorSamples:[],lastScanReason:''};
 let epoch=0,watchers=[],interval=null,eventTimer=null,reconnectTimer=null,stopped=false,scanPromise=null,requested=false,reconnectDelay=1000;
 let watchProcess=null;
+let skipInitialScan=process.env.DRAWING_WORKBENCH_SKIP_STARTUP_SCAN==='1';
 const pending=new Map(),treePending=new Set();let treeRunning=0;
 const pause=()=>new Promise(resolve=>setImmediate(resolve));
 function recordError(p,error,watch=false){
@@ -179,13 +180,15 @@ function scheduleReconnect(){
   reconnectTimer=setTimeout(async()=>{reconnectTimer=null;await attachWatchers();if(!stopped)scan('watch-reconnected');},reconnectDelay);
   reconnectTimer.unref();reconnectDelay=Math.min(60000,reconnectDelay*2);
 }
-function configure(){
+function configure({skipScan=false}={}){
   epoch++;const token=epoch,ready=attachWatchers();store.pruneScope(config.getSettings());store.invalidateStats();
   if(interval)clearInterval(interval);
   interval=setInterval(()=>{if(state.watchErrors.length&&!useNative())attachWatchers();scan('scheduled');},config.getSettings().rescanMinutes*60000);interval.unref();
-  state.running=true;Promise.resolve(ready).then(()=>{if(!stopped&&token===epoch)scan('configuration');});
+  state.running=!skipScan;
+  if(skipScan)state.lastScanReason='existing-index-startup';
+  Promise.resolve(ready).then(()=>{if(!stopped&&token===epoch&&!skipScan)scan('configuration');});
 }
-function start(){stopped=false;configure();}
+function start(){stopped=false;const skipScan=skipInitialScan;skipInitialScan=false;configure({skipScan});}
 function stop(){stopped=true;epoch++;if(interval)clearInterval(interval);if(eventTimer)clearTimeout(eventTimer);if(reconnectTimer)clearTimeout(reconnectTimer);for(const w of watchers)w.close();watchers=[];if(watchProcess){const child=watchProcess;watchProcess=null;child.kill();}pending.clear();treePending.clear();}
 function status(){return {...structuredClone(state),queuedEvents:pending.size,directoryScans:treeRunning+treePending.size};}
 module.exports={start,stop,configure,scan,status,processPath,engine};
