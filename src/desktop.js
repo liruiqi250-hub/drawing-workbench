@@ -8,7 +8,17 @@ const execFileAsync=promisify(execFile);
 const literal=s=>"'"+s.replace(/'/g,"''")+"'";
 async function powershell(script){return execFileAsync('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:15000,maxBuffer:512*1024});}
 async function openFile(p){await powershell(`Start-Process -FilePath ${literal(p)}`);}
-async function locateFile(p){await execFileAsync('explorer.exe',[`/select,${p}`],{windowsHide:true,timeout:15000});}
+async function locateFile(p){
+  let result;
+  try{
+    const {stdout}=await execFileAsync(config.PYTHON,[path.join(config.APP_DIR,'tools','locate_file.py'),p],{windowsHide:true,timeout:15000,maxBuffer:64*1024,env:{...process.env,PYTHONUTF8:'1',PYTHONDONTWRITEBYTECODE:'1'}});
+    result=JSON.parse(stdout.trim());
+  }catch(error){
+    try{result=JSON.parse(String(error.stdout||'').trim());}catch{}
+    throw new Error(result?.error||(error.killed?'Windows 定位响应超时，请稍后重试。':'定位工具未能启动，请检查本机 Python 运行环境。'));
+  }
+  if(result?.ok!==true||result.hresult!==0)throw new Error(result?.error||'Windows 没有确认图纸定位成功，请稍后重试。');
+}
 async function setAutoStart(enabled){
   const startup=path.join(process.env.APPDATA,'Microsoft','Windows','Start Menu','Programs','Startup');
   const shortcut=path.join(startup,'图纸工作台.lnk');

@@ -184,7 +184,7 @@
     const connection = $('connection-status');
     connection.className = `connection connected${indexing.running ? ' scanning' : ''}`;
     connection.lastElementChild.textContent = indexing.running ? '本机已连接 · 扫描中' : '本机服务已连接';
-    $('app-version').textContent = `V${String(status.version || '0.5.0').replace(/^v/i, '')}`;
+    $('app-version').textContent = `V${String(status.version || '0.5.1').replace(/^v/i, '')}`;
     if (status.ai) state.aiStatus = { ...state.aiStatus, ...status.ai };
     renderAiControls();
     renderNavigation(stats);
@@ -205,7 +205,7 @@
 
   function renderMaintenance(status) {
     const index = status.indexing || {};
-    $('setting-version').textContent = `V${String(status.version || '0.5.0').replace(/^v/i, '')}`;
+    $('setting-version').textContent = `V${String(status.version || '0.5.1').replace(/^v/i, '')}`;
     $('setting-engine').textContent = status.engine || '—';
     $('setting-total').textContent = `${number(status.stats?.groupTotal)} 组图纸 · ${number(status.stats?.physicalTotal)} 个原始文件 · ${number(status.stats?.versionGroups)} 组含多个版本`;
     $('grouping-summary').textContent = `已归为 ${number(status.stats?.groupTotal)} 组，保留 ${number(status.stats?.physicalTotal)} 个原始文件。其中 ${number(status.stats?.backupFileCount)} 个文件标有备份来源或时间戳。`;
@@ -898,7 +898,7 @@
       if (!state.aiSuggestionDrafts.has(suggestion.id)) state.aiSuggestionDrafts.set(suggestion.id, { project: suggestion.project || '', type: suggestion.type || '', tags: (suggestion.tags || []).join('，'), dirty: false });
       const draft = state.aiSuggestionDrafts.get(suggestion.id), card = el('section', 'ai-suggestion-card');
       card.append(el('h3', '', suggestion.name || `图纸 ${suggestion.fileId}`), el('p', 'small break-anywhere', suggestion.path || ''), el('p', 'ai-reason', `判断理由：${suggestion.reason || '服务未提供理由'}`));
-      if (suggestion.rulesVersion && !['0.3.1','0.4.0','0.5.0'].includes(suggestion.rulesVersion)) card.append(el('p', 'notice', `这条建议生成于 V${String(suggestion.rulesVersion).replace(/^v/i, '')}，尚未参考图号规则；可手动重新分析。`));
+      if (suggestion.rulesVersion && !['0.3.1','0.4.0','0.5.0','0.5.1'].includes(suggestion.rulesVersion)) card.append(el('p', 'notice', `这条建议生成于 V${String(suggestion.rulesVersion).replace(/^v/i, '')}，尚未参考图号规则；可手动重新分析。`));
       if (suggestion.summary) card.append(el('p', 'small', suggestion.summary));
       const form = el('form', 'ai-suggestion-form');
       [['project', '项目'], ['type', '图纸类型'], ['tags', '标签（逗号分隔）']].forEach(([key, label]) => {

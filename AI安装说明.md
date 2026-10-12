@@ -1,4 +1,4 @@
-# AI 安装说明 · V0.5.0
+# AI 安装说明 · V0.5.1
 
 这份说明供能使用本机文件、PowerShell 和浏览器的 AI 执行。
 
@@ -12,7 +12,7 @@
 
    无界面验收可加 `-NoLaunch -NoShortcut`；可加 `-DownloadCache "完整缓存目录"` 使用已校验缓存。下载缓存中需要 Node ZIP、Python ZIP、两个 wheel；文件名与校验值见 manifest。不永久更改系统执行策略。
 
-4. 必须读取 `/api/health` 核对 `application=DrawingWorkbench`、`version=0.5.0` 和 appDirectory；再读取 `/api/status`，检查索引已启动、监听状态和 AI 默认配置。打开浏览器确认界面可用。
+4. 必须读取 `/api/health` 核对 `application=DrawingWorkbench`、`version=0.5.1` 和 appDirectory；再读取 `/api/status`，检查索引已启动、监听状态和 AI 默认配置。打开浏览器确认界面可用。
 5. 首次默认扫描可访问盘符。若用户指定文件夹，在设置保存其完整路径。首次全盘扫描可能较久；区分“正在扫描”和“已全部完成”，无法访问的目录说明真实原因。
 6. 用用户授权的临时目录创建合成 PDF 或 DWG 占位文件，验证新保存文件能被检索、时间戳备份归组，以及原文件未改动。合成 DWG 不代表 CAD 几何预览通过；PDF 预览需用真实有效的合成 PDF。验收记录留在临时工作目录，不进入仓库。
 7. 默认不保存、不测试任何真实 DeepSeek 密钥。告诉用户可在设置填写自己的 Key；有明确授权才进行连接测试或付费 AI 调用。没有 Key 时，关键词搜索与规则分类仍正常。
