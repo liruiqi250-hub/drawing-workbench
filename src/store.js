@@ -173,15 +173,17 @@ function candidateRows(plan,scope={},limit=60,includeText=false){
   if(!groups.length)throw new Error('AI 未生成有效检索条件，请补充名称、项目、用途或零件特征。');
   const formats=(plan.formats||[]).filter(f=>/^\.?[a-zA-Z0-9]{1,12}$/.test(f)).map(f=>'.'+f.toLowerCase().replace(/^\./,''));
   const {cte,args,grouped}=buildQuery({...scope,formats:scope.format?[]:formats},groups,includeText),scoreArgs=[];
-  const score=[...new Set([...groups.flat(),...(plan.keywords||[])])].slice(0,40).map(term=>{scoreArgs.push(pattern(term),pattern(term));return "CASE WHEN name LIKE ? ESCAPE '\\' THEN 4 ELSE 0 END+CASE WHEN (path||' '||naming_search"+(includeText?"||' '||content":"")+") LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END";}).join('+')||'0';
-  const rows=db.prepare(cte+`SELECT result.*,(SELECT MAX(${score}) FROM scoped WHERE ${grouped?'scoped.group_key=result.group_key':'scoped.id=result.id'}) ai_score FROM result ORDER BY ai_score DESC,modified DESC LIMIT ?`).all(...args,...scoreArgs,Math.max(20,Math.min(100,Number(limit)||60)));
+  const optional=[...new Set((plan.keywords||[]).filter(term=>typeof term==='string'&&term.trim()))].slice(0,12);
+  const scoreText="(s.path||' '||s.naming_search||' '||s.project||' '||s.type||' '||s.tags"+(includeText?"||' '||s.content":"")+(grouped?"||' '||COALESCE(sc.project,'')||' '||COALESCE(sc.type,'')||' '||COALESCE(sc.tags,'')":"")+")";
+  const score=[...new Set([...groups.flat(),...optional])].slice(0,40).map(term=>{scoreArgs.push(pattern(term),pattern(term));return "CASE WHEN s.name LIKE ? ESCAPE '\\' THEN 4 ELSE 0 END+CASE WHEN "+scoreText+" LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END";}).join('+')||'0';
+  const rows=db.prepare(cte+`SELECT result.*,(SELECT MAX(${score}) FROM scoped s ${grouped?'LEFT JOIN group_classifications sc ON sc.group_key=s.group_key':''} WHERE ${grouped?'s.group_key=result.group_key':'s.id=result.id'}) ai_score FROM result ORDER BY ai_score DESC,modified DESC LIMIT ?`).all(...args,...scoreArgs,Math.max(20,Math.min(100,Number(limit)||60)));
   return rows.map(row=>{
     const members=grouped?groupRows(row):[row],selected=[],picked=new Set(),classification=grouped?getClassification(row):legacyClassification(row);
     // A legacy union is useful for group filtering, but it does not prove that
     // every physical version owns a tag. Cover subjects with the actual owner.
     const haystacks=new Map(members.map(member=>[member.id,[member.name,member.path,member.naming_search,member.project,member.type,member.tags,...(includeText?[member.content]:[])].join(' ').toLowerCase()]));
     const legacyHaystacks=new Map(members.map(member=>[member.id,[member.project,member.type,member.tags].join(' ').toLowerCase()]));
-    const terms=[...new Set(groups.flat())];
+    const terms=[...new Set([...groups.flat(),...optional])];
     const physicalTerms=member=>terms.filter(term=>haystacks.get(member.id).includes(String(term).toLowerCase()));
     const matches=(member,group)=>group.some(term=>haystacks.get(member.id).includes(String(term).toLowerCase()));
     // Only explicitly confirmed values can stand as common-classification
@@ -191,7 +193,7 @@ function candidateRows(plan,scope={},limit=60,includeText=false){
     const groupHaystack=grouped&&confirmed.length?[common.project,common.type,JSON.stringify(common.tags)].join(' ').toLowerCase():'';
     const groupTerms=terms.filter(term=>groupHaystack.includes(String(term).toLowerCase()));
     const origin=member=>{const versionTerms=physicalTerms(member);return {kind:versionTerms.length?'version':'scope',versionTerms,groupTerms:[]};};
-    const pick=member=>{if(member&&!picked.has(member.id)&&selected.length<8){picked.add(member.id);selected.push({...member,evidenceOrigin:origin(member)});}};
+    const pick=(member,cap=8)=>{if(member&&!picked.has(member.id)&&selected.length<cap){picked.add(member.id);selected.push({...member,evidenceOrigin:origin(member)});}};
     const coverage=member=>groups.reduce((score,group)=>score+(matches(member,group)?1:0),0);
     const legacyCoverage=member=>groups.reduce((score,group)=>score+(group.some(term=>legacyHaystacks.get(member.id).includes(String(term).toLowerCase()))?1:0),0);
     const backupEvidence=scope.backup==='only'?members.filter(member=>member.is_backup).sort((a,b)=>coverage(b)-coverage(a)||legacyCoverage(b)-legacyCoverage(a))[0]:null;
@@ -201,17 +203,30 @@ function candidateRows(plan,scope={},limit=60,includeText=false){
       const ranked=members.filter(member=>!picked.has(member.id)).map(member=>({member,score:uncovered.reduce((score,group)=>score+(matches(member,group)?1:0),0)})).sort((a,b)=>b.score-a.score||legacyCoverage(b.member)-legacyCoverage(a.member));
       if(!ranked[0]?.score)break;pick(ranked[0].member);uncovered=uncovered.filter(group=>!matches(ranked[0].member,group));
     }
-    const commonSubjects=uncovered.filter(group=>group.some(term=>groupTerms.includes(term)));
-    if(commonSubjects.length){
+    const attachGroupEvidence=matched=>{
+      if(!matched.length)return;
       if(!selected.length)pick(row);
-      const anchor=selected.find(member=>member.id===row.id)||selected[0],matched=[...new Set(commonSubjects.flatMap(group=>group.filter(term=>groupTerms.includes(term))))];
-      anchor.evidenceOrigin={...anchor.evidenceOrigin,kind:anchor.evidenceOrigin.versionTerms.length?'mixed':'group',groupTerms:matched,groupClassification:common};
+      const anchor=selected.find(member=>member.id===row.id)||selected[0];
+      anchor.evidenceOrigin={...anchor.evidenceOrigin,kind:anchor.evidenceOrigin.versionTerms.length?'mixed':'group',groupTerms:[...new Set([...anchor.evidenceOrigin.groupTerms,...matched])],groupClassification:common};
+    };
+    const commonSubjects=uncovered.filter(group=>group.some(term=>groupTerms.includes(term)));
+    attachGroupEvidence([...new Set(commonSubjects.flatMap(group=>group.filter(term=>groupTerms.includes(term))))]);
+    // Optional ranking terms must retain their real owners before unrelated
+    // versions fill the evidence cap. A separate backup proof reserves slot 9.
+    const optionalCovered=term=>selected.some(member=>member.evidenceOrigin.versionTerms.includes(term)||member.evidenceOrigin.groupTerms.includes(term));
+    let remainingOptional=optional.filter(term=>!optionalCovered(term));
+    while(remainingOptional.length&&selected.length<9){
+      const ranked=members.filter(member=>!picked.has(member.id)).map(member=>({member,score:remainingOptional.filter(term=>matches(member,[term])).length})).filter(value=>value.score>0).sort((a,b)=>b.score-a.score||legacyCoverage(b.member)-legacyCoverage(a.member));
+      const candidate=ranked.find(value=>selected.length<8||!backupEvidence||selected.some(member=>member.is_backup)||value.member.is_backup)?.member;
+      if(!candidate)break;pick(candidate,9);remainingOptional=remainingOptional.filter(term=>!optionalCovered(term));
     }
+    attachGroupEvidence(remainingOptional.filter(term=>groupTerms.includes(term)));
     for(const member of members)if(groups.some(group=>matches(member,group)))pick(member);
     // Eight independent subjects can require eight versions. An unrelated
     // backup that alone proves backup=only is the sole permitted ninth item.
     if(backupEvidence&&!selected.some(member=>member.is_backup)&&selected.length<9)selected.push({...backupEvidence,evidenceOrigin:origin(backupEvidence)});
-    return {row,evidenceRows:selected.length?selected:[{...row,evidenceOrigin:origin(row)}]};
+    const truncatedKeywords=optional.filter(term=>!optionalCovered(term)&&(groupTerms.includes(term)||members.some(member=>matches(member,[term]))));
+    return {row,evidenceRows:selected.length?selected:[{...row,evidenceOrigin:origin(row)}],truncatedKeywords};
   });
 }
 let statsCache=null,statsAt=0;

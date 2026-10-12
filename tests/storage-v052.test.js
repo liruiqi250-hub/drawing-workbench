@@ -126,3 +126,36 @@ test('明确共同确认标签可以作为 group 来源证据，但不伪造各�
   const candidates=store.candidateRows({groups:[['整组确认专用标签']]},{},20,false);assert.equal(candidates.length,1);const evidence=candidates[0].evidenceRows;
   assert.equal(evidence.length,1);assert.equal(evidence[0].tags,'[]');assert.equal(evidence[0].evidenceOrigin.kind,'group');assert.deepEqual(evidence[0].evidenceOrigin.versionTerms,[]);assert.deepEqual(evidence[0].evidenceOrigin.groupTerms,['整组确认专用标签']);assert.deepEqual(evidence[0].evidenceOrigin.groupClassification.tags,['整组确认专用标签']);assert.equal(evidence[0].evidenceOrigin.groupClassification.source,'manual');
 });
+
+test('SQLite 候选限额前对物理版本及共同分类的项目、类型、标签评分，最旧高相关目标不被20组挤掉',()=>{
+  for(const scope of ['version','group'])for(const field of ['project','type','tags']){
+    const directory=`ranking-${scope}-${field}`,target=add('评分主体 最旧目标.dwg',directory);
+    const keyword=`专用高相关${scope}${field}`,data={scope,project:'普通项目',type:'普通类型',tags:[]};data[field]=field==='tags'?[keyword]:keyword;store.classify(target.id,data);
+    store.db.prepare('UPDATE files SET modified=1 WHERE id=?').run(target.id);
+    for(let i=0;i<20;i++){const member=add(`评分主体 普通${i}.dwg`,directory);store.db.prepare('UPDATE files SET modified=? WHERE id=?').run(100+i,member.id);}
+    const candidates=store.candidateRows({groups:[['评分主体']],keywords:[keyword]},{},20,false);assert.equal(candidates.length,20);assert.equal(candidates[0].row.id,target.id,`${scope}/${field} 必须在 LIMIT 前获得分类关键词加分`);
+    if(scope==='version')assert.equal(store.candidateRows({groups:[['评分主体']],keywords:[keyword]},{grouped:'0'},20,false)[0].row.id,target.id,`${field} 物理字段评分不能依赖共同分类补偿`);
+  }
+});
+
+test('必要主题均命中名称时仍优先保留最旧备份的 optional 标签真实 owner',()=>{
+  add('可选证据主体.dwg','optional-owner');let owner;
+  for(let i=0;i<10;i++){const member=add(`可选证据主体 2026-03-02 14_52_${String(i).padStart(2,'0')}.dwg`,'optional-owner');if(i===0)owner=member;}
+  store.classify(owner.id,{scope:'version',project:'证据项目',tags:['可选词唯一旧版本标签']});
+  const candidates=store.candidateRows({groups:[['可选证据主体']],keywords:['可选词唯一旧版本标签']},{},20,false),evidence=candidates[0].evidenceRows;
+  assert.ok(evidence.some(row=>row.id===owner.id&&row.evidenceOrigin.versionTerms.includes('可选词唯一旧版本标签')));assert.deepEqual(candidates[0].truncatedKeywords,[]);assert.ok(evidence.length<=9);
+});
+
+test('optional 仅命中明确共同确认标签时附 group 来源，不伪造版本标签也不报截断',()=>{
+  const original=add('共同可选证据主体.dwg','optional-group');store.classify(original.id,{project:'共同项目',tags:['共同可选专用标签']});
+  const [candidate]=store.candidateRows({groups:[['共同可选证据主体']],keywords:['共同可选专用标签']},{},20,false);
+  assert.equal(candidate.evidenceRows[0].tags,'[]');assert.equal(candidate.evidenceRows[0].evidenceOrigin.kind,'mixed');assert.deepEqual(candidate.evidenceRows[0].evidenceOrigin.groupTerms,['共同可选专用标签']);assert.deepEqual(candidate.truncatedKeywords,[]);
+});
+
+test('必要八主题占满时 optional 证据不足明确记录截断词，同时保留独立备份条件证明',()=>{
+  const original=add('截断证据主体.pdf','optional-truncation');
+  for(let i=0;i<10;i++){const member=add(`截断证据主体 ${i}.pdf`,'optional-truncation');store.db.prepare('UPDATE files SET group_key=? WHERE id=?').run(raw(original).group_key,member.id);store.setPreview(member.id,store.contentVersion(raw(member)),{status:'ready',text:i<8?`必需主题${i}标识`:`可选主题${i}标识`,preview:false});}
+  const backup=add('截断证据主体 2026-03-02 14_52_26.pdf','optional-truncation'),groups=Array.from({length:8},(_,i)=>[`必需主题${i}标识`]),keywords=['可选主题8标识','可选主题9标识'];
+  const [candidate]=store.candidateRows({groups,keywords},{backup:'only'},20,true);assert.equal(candidate.evidenceRows.length,9);assert.ok(candidate.evidenceRows.some(row=>row.id===backup.id));assert.deepEqual(candidate.truncatedKeywords,keywords);
+  for(const group of groups)assert.ok(candidate.evidenceRows.some(row=>row.content.includes(group[0])));
+});
