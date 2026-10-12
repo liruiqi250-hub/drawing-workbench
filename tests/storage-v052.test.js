@@ -15,9 +15,37 @@ test('同日期补零批次使用规范键导航及规则项目，字母批次�
   const a=add('26-7.2-01 恐龙.dwg'),b=add('26-07.02-02 恐龙.dwg'),c=add('26-07.02A-03 恐龙.dwg'),d=add('26-7.2B-04 恐龙.dwg');
   store.db.prepare("UPDATE app_meta SET value='0.4.0' WHERE key='naming_version'").run();store.migrateNaming();
   assert.equal(store.search({orderBatch:'26-7.02'}).total,2);assert.equal(store.search({orderBatch:'2026-07-02A'}).total,1);assert.equal(store.search({orderBatch:'26-07.2B'}).total,1);
-  assert.deepEqual(store.stats().orderBatches.map(item=>item.name).sort(),['2026-07-02','2026-07-02A','2026-07-02B']);
+  for(const grouped of [true,false]){
+    config.saveSettings({versionGrouping:grouped});store.invalidateStats();
+    assert.deepEqual(store.stats().orderBatches.map(item=>({...item})),[{name:'2026-07-02B',count:1},{name:'2026-07-02A',count:1},{name:'2026-07-02',count:2}]);
+  }
   assert.equal(store.namingFor(raw(a)).orderBatch,'26-7.2');assert.equal(store.namingFor(raw(b)).drawingNumber,'26-07.02-02');
   assert.equal(store.suggestion(raw(a)).project,store.suggestion(raw(b)).project);assert.notEqual(store.suggestion(raw(c)).project,store.suggestion(raw(d)).project);
+});
+
+for(const grouped of [true,false])test(`超过 200 批订单先按规范日期倒序取最近 100 批，保留小订单及${grouped?'归组':'物理文件'}计数`,()=>{
+  config.saveSettings({versionGrouping:grouped});
+  const keys=[];let secondNewest='';
+  for(let day=0;day<241;day++){
+    const date=new Date(Date.UTC(2026,0,1+day)),key=date.toISOString().slice(0,10);
+    const batch=`26-${date.getUTCMonth()+1}.${date.getUTCDate()}`;keys.push(key);
+    for(let serial=1;serial<=(day===240?1:4);serial++){
+      const extension=day===240?'.pdf':'.dwg',name=`${batch}-${serial} 导航样本${extension}`;
+      const entry=add(name,'navigation');legacy(entry,day===240?'近期小订单':'大量旧订单',day===240?'近期类型':'大量类型');
+      if(day===239&&serial===1)secondNewest=name.slice(0,-extension.length);
+    }
+  }
+  for(const timestamp of ['2026-09-01 10_00_00','2026-09-02 10_00_00'])add(`${secondNewest} ${timestamp}.dwg`,'navigation');
+  const missing=add('26-12.31-1 已移出范围.dwg','navigation');store.markMissing(missing.file);
+  add('无订单批次.dwg','navigation');
+  store.invalidateStats();const stats=store.stats(),batches=stats.orderBatches;
+  assert.equal(batches.length,100);assert.ok(batches.some(item=>item.name===keys.at(-1)),'最新单文件订单必须进入导航');
+  assert.deepEqual(batches.map(item=>item.name),keys.slice(-100).reverse(),'先排序完整批次集合再截取，不能先按数量筛掉小订单');
+  assert.equal(batches[0].count,1);assert.equal(batches[1].count,grouped?4:6);
+  assert.equal(stats.physicalTotal,964);assert.equal(stats.groupTotal,962);assert.equal(stats.total,grouped?962:964);
+  assert.deepEqual(stats.projects.map(item=>item.name),['大量旧订单','近期小订单']);
+  assert.deepEqual(stats.types.map(item=>item.name),['大量类型','近期类型']);
+  assert.deepEqual(stats.formats.map(item=>item.name),['DWG','PDF']);
 });
 
 test('A 改名占 B 历史路径时保留 A 身份和分类，B 墓碑保留路径与分类而不复活',()=>{
