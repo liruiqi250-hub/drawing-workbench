@@ -1,0 +1,26 @@
+{
+  "node": {
+    "version": "24.15.0",
+    "file": "node-v24.15.0-win-x64.zip",
+    "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+    "sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62"
+  },
+  "python": {
+    "version": "3.13.13",
+    "file": "python-3.13.13-embed-amd64.zip",
+    "url": "https://www.python.org/ftp/python/3.13.13/python-3.13.13-embed-amd64.zip",
+    "sha256": "8766a8775746235e23cf5aee5027ab1060bb981d93110577adcf3508aa0cbd55"
+  },
+  "wheels": [
+    {
+      "file": "pillow-12.3.0-cp313-cp313-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/a6/9b/7a58e61d62be561da3a356fe2384d4059a6345fc130e23ef1c36a5b81d24/pillow-12.3.0-cp313-cp313-win_amd64.whl",
+      "sha256": "1cca606cd25738df4ed873d5ad46bbdb3d83b5cbca291f6b4ff13a4df6b0bbe8"
+    },
+    {
+      "file": "pypdfium2-5.14.0-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/00/dc/ca7874924c9cfd701ad53f89529968523790e70473e0b71e834668316148/pypdfium2-5.14.0-py3-none-win_amd64.whl",
+      "sha256": "149fd5c6397b8df8bf7911a93506eff0be874f877afe7ac936cf5d37d21a6a06"
+    }
+  ]
+}

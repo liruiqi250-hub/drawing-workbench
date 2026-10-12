@@ -1,0 +1,38 @@
+# 个人数据和密钥绝不提交
+data/
+logs/
+cache/
+backups/
+*.sqlite
+*.sqlite-*
+*.db
+*.dpapi.json
+.env
+.env.*
+settings.json
+ai_usage.json
+server.pid
+# 可在本机重新下载的运行环境
+runtime/
+runtime.previous-*/
+.runtime-staging-*/
+.downloads/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.test-tmp/
+dist/
+*.lnk
+# 不把用户图纸作为样本加入源码
+*.dwg
+*.dxf
+*.pdf
+*.dwt
+*.dgn
+*.step
+*.stp
+*.sldprt
+*.sldasm
+*.slddrw

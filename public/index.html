@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>图纸工作台 V0.5.0</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="logo" aria-hidden="true">图</div>
+      <div class="identity"><div class="app-name">图纸工作台 <span id="app-version" class="small">V0.5.0</span></div><div class="small">本机图纸索引 · 即时搜索 · 分类管理</div></div>
+      <div id="connection-status" class="connection"><span class="status-dot"></span><span>正在连接本机服务</span></div>
+      <button id="settings-open" type="button">设置</button>
+    </header>
+    <div id="error-banner" class="error-banner" role="alert" hidden></div>
+    <div class="shell">
+      <aside class="sidebar" aria-label="图纸导航">
+        <nav id="main-nav" class="nav-list" aria-label="快捷入口">
+          <button type="button" class="active" data-scope-kind="all"><span>全部图纸</span><span id="all-count" class="count">—</span></button>
+          <button type="button" data-scope-kind="projectKind" data-scope-value="order"><span>订单图纸</span><span id="order-count" class="count">—</span></button>
+          <button type="button" data-scope-kind="projectKind" data-scope-value="exhibition"><span>展会项目</span><span id="exhibition-count" class="count">—</span></button>
+          <button type="button" data-scope-kind="backup" data-scope-value="only"><span>含备份的图纸</span><span id="backup-count" class="count">—</span></button>
+          <button type="button" data-scope-kind="pending"><span>待整理</span><span id="pending-count" class="count">—</span></button>
+        </nav>
+        <div class="nav-label">按图号订单</div><nav id="orderBatch-nav" class="nav-list order-batch-nav" aria-label="图号订单批次"></nav>
+        <div class="nav-label">按项目</div><nav id="project-nav" class="nav-list" aria-label="项目分类"></nav>
+        <div class="nav-label">按类型</div><nav id="type-nav" class="nav-list" aria-label="图纸类型"></nav>
+        <div class="nav-label">按格式</div><nav id="format-nav" class="nav-list" aria-label="文件格式"></nav>
+        <div class="source-note"><strong>文件保留在原目录</strong>分类只写入本地索引。<br>打开和定位使用本机程序。</div>
+        <div class="sidebar-status"><span id="watch-summary">正在读取监听状态</span><button id="sidebar-settings" type="button" class="text-button">管理扫描位置</button></div>
+      </aside>
+      <main class="main">
+        <div class="heading"><div><h1 id="scope-title">全部图纸</h1><p id="library-summary" class="small">正在读取图纸组与原始文件数量…</p></div><button id="scan-button" type="button">重新扫描</button></div>
+        <div class="search-modes" role="group" aria-label="搜索方式"><button id="keyword-search-button" type="button" class="active" aria-pressed="true">关键词搜索</button><button id="ai-search-button" type="button" aria-pressed="false">自然语言找图</button><span id="ai-short-status" class="small">DeepSeek 待配置</span></div>
+        <form id="search-form" class="search"><span class="search-symbol" aria-hidden="true">⌕</span><input id="query" type="search" autocomplete="off" aria-label="搜索图纸" placeholder="输入文件名、图号、原路径或标签"><button id="search-submit" type="submit" class="primary">搜索</button></form>
+        <div class="search-note"><span id="search-note">正在读取本机索引…</span><span id="last-refresh" class="small"></span></div>
+        <section id="ai-search-info" class="ai-search-info" aria-label="自然语言检索说明" hidden></section>
+        <section id="index-banner" class="index-banner" aria-label="索引状态" hidden><div><strong id="index-title">正在扫描</strong><span id="index-summary"></span></div><div id="index-root" class="small break-anywhere"></div><progress id="index-progress" aria-label="正在扫描图纸"></progress></section>
+        <div class="content">
+          <section class="results-section" aria-label="图纸搜索结果">
+            <div class="toolbar"><strong id="result-count" aria-live="polite">正在加载…</strong><div class="toolbar-filters"><button id="ai-batch-button" type="button" title="仅分析当前页前几份待整理图纸">AI 分析本页待整理</button><select id="format-filter" aria-label="按文件格式筛选"><option value="">全部格式</option></select><select id="sort" aria-label="排序方式"><option value="modified">最近修改</option><option value="name">名称排序</option><option value="size">文件大小</option></select></div></div>
+            <div id="ai-batch-note" class="small batch-note"></div>
+            <div id="results" class="result-list" aria-live="polite"><div class="empty">正在连接本机图纸索引…</div></div>
+            <div class="pagination"><span id="page-summary" class="small"></span><div><button id="previous-page" type="button" disabled>上一页</button><span id="page-number">1 / 1</span><button id="next-page" type="button" disabled>下一页</button></div></div>
+          </section>
+          <aside id="detail" class="detail" aria-label="图纸详情与分类"><div class="detail-top">图纸详情</div><div class="detail-empty"><span class="empty-file" aria-hidden="true">图</span><strong>选择一份图纸</strong><p>查看真实预览、原路径和分类信息。</p></div></aside>
+        </div>
+      </main>
+    </div>
+    <footer class="footer"><span id="feedback" class="feedback" role="status" aria-live="polite">关键词搜索使用本机数据，AI 仅手动触发。</span><span>V0.5.0 · AI 仅手动触发 · 原图只读</span></footer>
+  </div>
+  <form id="ai-settings-form"></form>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <div class="settings-header"><div><h2 id="settings-title">工作台设置</h2><p class="small">扫描设置与 DeepSeek 设置分别保存；保存 DeepSeek 设置不会触发扫描。</p></div><button id="settings-close" type="button" aria-label="关闭设置">关闭</button></div>
+    <form id="settings-form">
+      <div class="settings-scroll">
+        <div id="settings-error" class="form-error" role="alert" hidden></div>
+        <p class="notice">扫描只读取文件；调整扫描范围或分类规则不会移动、重命名或修改原图。</p>
+        <fieldset><legend>扫描位置</legend><label for="setting-roots">盘符或文件夹路径<span class="field-hint">一行一个；可从资源管理器地址栏复制任意本机或共享文件夹路径。</span></label><textarea id="setting-roots" rows="5" spellcheck="false" placeholder="等待加载本机扫描位置…" required></textarea><div class="field-actions"><button id="add-root" type="button">添加文件夹路径</button><span class="small">系统默认盘符由本机服务提供，未连接的盘符会显示扫描错误。</span></div><div id="add-root-row" class="add-root-row" hidden><input id="new-root" type="text" aria-label="要添加的文件夹路径" placeholder="例如 D:\CAD图纸"><button id="confirm-root" type="button">添加</button><button id="cancel-root" type="button">取消</button></div></fieldset>
+        <fieldset><legend>文件范围</legend><div class="form-grid"><div><label for="setting-extensions">文件扩展名<span class="field-hint">使用空格或逗号分隔，例如 .dwg .dxf .pdf</span></label><input id="setting-extensions" type="text" required spellcheck="false"></div><div><label for="setting-page-size">每页显示数量<span class="field-hint">搜索只加载当前页，适合大量图纸。</span></label><select id="setting-page-size"><option value="20">20 份</option><option value="50">50 份</option><option value="100">100 份</option><option value="200">200 份</option></select></div></div><label for="setting-excludes">排除目录<span class="field-hint">一行一个目录名称或绝对路径，按本机索引规则跳过扫描。</span></label><textarea id="setting-excludes" rows="4" spellcheck="false"></textarea></fieldset>
+        <fieldset><legend>实时更新与启动</legend><label class="check-row"><input id="setting-watch" type="checkbox"><span>实时监听扫描目录中的新增、修改和删除</span></label><div class="form-grid"><div><label for="setting-rescan">补充扫描间隔（分钟）<span class="field-hint">定期补扫用于发现监听遗漏。</span></label><input id="setting-rescan" type="number" min="1" max="1440" step="1" required></div><div class="startup-field"><label class="check-row"><input id="setting-autostart" type="checkbox"><span>Windows 登录后启动工作台</span></label><span class="field-hint">由本机服务保存并应用启动设置。</span></div></div></fieldset>
+        <fieldset><legend>原图与备份归组</legend>
+          <label class="check-row"><input id="setting-grouping" type="checkbox" checked><span>搜索时折叠备份，默认显示原图</span></label>
+          <p id="grouping-summary" class="notice"></p>
+          <div class="naming-rule-guide"><strong>已启用的保守归组规则 · V0.5.0</strong><p>同一目录内，去掉名称末尾有效的备份日期与时分秒后，基础名及格式完全一致才归组。支持多层时间戳；PDF 的“模型 / Model / Layout”后缀保留。不同格式、不同产品名、不同序号独立显示。</p><p>下方明确指定的备份目录可还原来源目录，再按精确基础名归组。规则以最长匹配目录优先，不级联映射。不按跨目录同名、文件大小或单独图号合并。</p><p>原图优先；只有备份时显示最近备份并标注“仅找到备份”。关键词可命中组内任意版本，点开详情查看所有版本。取消上方开关可逐个查看原始文件，文件始终保留。</p></div>
+          <div id="grouping-rules-body"></div><button id="add-group-rule" type="button">添加备份来源规则</button><p class="field-hint">填写真实来源路径；原图目录不能与备份目录相同或位于其内部。停用或移除规则后重新计算归组，不修改磁盘文件。</p>
+        </fieldset>
+        <fieldset><legend>分类规则</legend><div class="naming-rule-guide"><strong>按图号识别订单与产品</strong><p><code>26-10.29-03 霸王龙4米</code>：订单批次 26-10.29，下单日期 2026-10-29，生产单序号 03，产品名称 霸王龙，尺寸 4米。</p><p>展会按名称或目录识别，例如“郑州展会”；只有“展会霸王龙3米”“展会样式”时归入通用展会项目。名称末尾的日期与时分秒作为备份参考时间，单独显示，不作为下单日期。</p><p>命名解析在本机自动完成，识别结果待核对；不会覆盖已确认的手工分类。</p></div><p class="small">本机命名与关键词规则提供分类建议，需人工确认；这不是 AI 识别。下方可补充匹配文件名或路径的关键词。</p><div class="rules-table-wrap"><table class="rules-table"><thead><tr><th scope="col">关键词</th><th scope="col">建议项目</th><th scope="col">建议类型</th><th scope="col">操作</th></tr></thead><tbody id="rules-body"></tbody></table></div><button id="add-rule" type="button">添加分类规则</button><p class="field-hint">项目和类型至少填写一项；删除规则不会清除已确认的分类。</p></fieldset>
+        <fieldset id="ai-settings-section"><legend>DeepSeek AI</legend>
+          <div id="ai-settings-error" class="form-error" role="alert" hidden></div>
+          <p id="ai-config-status" class="ai-config-status" role="status">正在读取 AI 配置…</p>
+          <p id="ai-setup-note" class="notice" role="status" hidden></p>
+          <label class="check-row"><input id="ai-enabled" form="ai-settings-form" type="checkbox"><span>启用 DeepSeek 自然语言找图与分类建议</span></label>
+          <div class="form-grid"><div><label for="ai-key">API Key<span class="field-hint">只在新增或更换密钥时填写；密钥由本机加密保存，页面不回填。</span></label><input id="ai-key" form="ai-settings-form" type="password" autocomplete="new-password" spellcheck="false" placeholder="未填写时保留已保存的密钥" maxlength="500"></div><div><label for="ai-model">模型 ID<span class="field-hint">使用 DeepSeek 官方接口，可按账户可用模型调整。</span></label><input id="ai-model" form="ai-settings-form" type="text" value="deepseek-flash" required maxlength="120" spellcheck="false"></div></div>
+          <div class="form-grid"><div><label for="ai-batch-size">每次批量分析份数<span class="field-hint">仅分析当前页前 N 份待整理图纸，1–10 份。</span></label><input id="ai-batch-size" form="ai-settings-form" type="number" min="1" max="10" step="1" value="5" required></div><div><label for="ai-candidate-limit">自然语言候选上限<span class="field-hint">先在本机找到候选，再由 AI 排序，20–100 份。</span></label><input id="ai-candidate-limit" form="ai-settings-form" type="number" min="20" max="100" step="1" value="60" required></div></div>
+          <label class="check-row"><input id="ai-send-pdf" form="ai-settings-form" type="checkbox"><span>允许发送 PDF 已提取文字片段（默认关闭）</span></label>
+          <div class="ai-boundary"><strong>点击 AI 操作时会发送什么</strong><p>自然语言查询、被分析候选的文件名、最多末 3 级目录名称、格式、已有项目／类型／标签，以及本机解析出的图号、下单日期、产品名称与尺寸、展会及备份信息会发送至 DeepSeek 官方服务；不发送绝对路径。开启 PDF 文字后，每文件最多发送 2000 字，来源限前 8 页。</p><p>不会上传 CAD／PDF 原文件、预览图片或全盘文件列表。AI 只在手动搜索、分析或连接测试时调用，可能产生账户费用；后台轮询不会重复调用。建议需您编辑确认后才保存分类。</p></div>
+          <div class="field-actions"><button id="ai-settings-save" form="ai-settings-form" type="submit" class="primary">保存 DeepSeek 设置</button><button id="ai-test-button" type="button">测试连接</button><button id="ai-clear-key" type="button">清除已保存密钥</button><span id="ai-dirty-note" class="small">与扫描设置分别保存</span></div>
+          <p id="ai-usage" class="field-hint" role="status">连接测试只发送简短测试消息，不发送图纸资料。</p>
+        </fieldset>
+        <fieldset><legend>索引与维护</legend><dl class="status-grid"><dt>程序版本</dt><dd id="setting-version">V0.5.0</dd><dt>索引引擎</dt><dd id="setting-engine">—</dd><dt>索引数量</dt><dd id="setting-total">—</dd><dt>扫描状态</dt><dd id="setting-index-status">—</dd><dt>最近完成</dt><dd id="setting-last-scan">—</dd><dt>监听目录</dt><dd id="setting-watching">—</dd></dl><div id="watch-errors" class="watch-errors" hidden></div><div id="scan-errors" class="watch-errors" hidden></div><div class="maintenance-actions"><button id="settings-scan" type="button">重新扫描</button><button id="backup-button" type="button">备份本地索引</button></div><p class="field-hint">备份包含索引、分类和设置，不复制原始图纸；不包含 API Key。</p><p id="backup-result" class="backup-result break-anywhere" hidden></p></fieldset>
+      </div>
+      <div class="settings-footer"><span id="settings-dirty-note" class="small">正在加载设置…</span><div><button id="settings-cancel" type="button">关闭</button><button id="settings-save" type="submit" class="primary" disabled>保存设置</button></div></div>
+    </form>
+  </dialog>
+  <dialog id="ai-suggestions-dialog" class="ai-suggestions-dialog" aria-labelledby="ai-suggestions-title"><div class="settings-header"><div><h2 id="ai-suggestions-title">AI 分类建议 · 待确认</h2><p class="small">建议仅供整理参考，编辑后逐份确认；原文件保持不变。</p></div><button id="ai-suggestions-close" type="button">关闭</button></div><div id="ai-suggestions-body" class="ai-suggestions-body"></div><div class="ai-suggestions-footer"><span id="ai-suggestions-summary" class="small"></span><button id="ai-suggestions-retry" type="button" hidden>重新分析</button></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
