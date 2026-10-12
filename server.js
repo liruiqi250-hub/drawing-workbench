@@ -95,8 +95,11 @@ async function handler(req,res){
       });
       const items=[];
       for(const match of result.matches){const row=await allowedRow(match.id),snapshot=snapshots.get(match.id);if(row&&snapshot?.stamp===aiStore.stamp(row))items.push({...store.publicFile(row),aiReason:match.reason,matchEvidence:snapshot.evidence.map(({sourceStamp,...evidence})=>evidence),evidenceTruncatedKeywords:snapshot.truncatedKeywords});}
+      const resultAdjustments=result.resultAdjustments||{duplicateCount:0,unknownIdCount:0},adjustmentNotes=[];
+      if(resultAdjustments.duplicateCount)adjustmentNotes.push(`已合并 ${resultAdjustments.duplicateCount} 条重复返回`);
+      if(resultAdjustments.unknownIdCount)adjustmentNotes.push(`已忽略 ${resultAdjustments.unknownIdCount} 条候选范围外返回`);
       return json(res,200,{items,total:items.length,page:1,limit:Math.max(1,items.length),totalCandidates:result.totalCandidates,plan:result.plan,
-        notice:`DeepSeek 扩展检索条件并筛选了 ${result.totalCandidates} 份本机候选；结果受名称、标签及已提取文字覆盖限制。`,usage:result.usage});
+        resultAdjustments,notice:`DeepSeek 扩展检索条件并筛选了 ${result.totalCandidates} 份本机候选；结果受名称、标签及已提取文字覆盖限制。${adjustmentNotes.length?' '+adjustmentNotes.join('；')+'，仅显示本次候选内的有效图纸。':''}`,usage:result.usage});
     }
     if(route==='/api/ai/classify'&&req.method==='POST'){
       const input=await body(req),settings=config.getSettings().ai;

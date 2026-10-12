@@ -12,7 +12,7 @@ function request(port,route,method='GET',payload,extraHeaders={}){return new Pro
 async function launch(mock){const port=await freePort(),data=path.join(temporary,mock?'mock-data':'real-data');fs.mkdirSync(data);fs.writeFileSync(path.join(data,'settings.json'),JSON.stringify({roots:[roots],watch:false,ai:{enabled:mock,model:'deepseek-flash'}}));
   const mockFactory=opts=>{let classifyCalls=0;return {
     status:()=>({...opts.getSettings().ai,configured:true,busy:false,fixtureClassifyCalls:classifyCalls}),saveCredentials:async()=>{},testConnection:async()=>({ok:true,model:'mock'}),
-    search:async(q,find)=>{const plan={groups:[['霸王龙']],keywords:['钢架'],formats:[]},c=await find(plan);return{matches:c.map(x=>({id:x.id,reason:'fixture依据名称'})),plan,totalCandidates:c.length,usage:{requests:2}};},
+    search:async(q,find)=>{const plan={groups:[['霸王龙']],keywords:['钢架'],formats:[]},c=await find(plan);return{matches:c.map(x=>({id:x.id,reason:'fixture依据名称'})),resultAdjustments:{duplicateCount:2,unknownIdCount:1},plan,totalCandidates:c.length,usage:{requests:2}};},
     classify:async(files)=>{classifyCalls++;return {suggestions:files.map(x=>({id:x.id,project:'AI建议项目',type:'钢架',tags:['fixture'],reason:'fixture依据名称',summary:'fixture'})),usage:{requests:1}};}
   };};
   const preload=path.join(temporary,'mock.cjs');fs.writeFileSync(preload,`const target=${JSON.stringify(path.join(app,'src/ai.js'))};require.cache[target]={id:target,filename:target,loaded:true,exports:{createAiService:(${mockFactory.toString()})}};const desktop=require(${JSON.stringify(path.join(app,'src/desktop.js'))});desktop.setAutoStart=()=>new Promise(resolve=>{process.send({fixture:'startupPending'});process.once('message',resolve);});const preview=require(${JSON.stringify(path.join(app,'src/preview.js'))});preview.ensure=()=>new Promise(resolve=>{process.send({fixture:'previewPending'});process.once('message',()=>resolve(null));});`);
@@ -42,6 +42,14 @@ test('mock仅替代云服务，真实HTTP候选检索遵守scope且返回已索�
   const found=await request(mock.port,'/api/ai/search','POST',{query:'找霸王龙的钢架图',scope:{format:'DWG'}});assert.equal(found.status,200);assert.equal(found.json.items.length,1);assert.equal(found.json.items[0].name,'霸王龙钢架.dwg');assert.equal(found.json.items[0].aiReason,'fixture依据名称');
   const excluded=await request(mock.port,'/api/ai/search','POST',{query:'霸王龙',scope:{format:'PDF'}});assert.equal(excluded.json.items.length,0);
 });
+test('安全结果规整的数量及提示通过HTTP返回，仍只显示范围内候选',async()=>{
+  const result=await request(mock.port,'/api/ai/search','POST',{query:'霸王龙钢架',scope:{format:'DWG'}});
+  assert.equal(result.status,200);assert.equal(result.json.items.length,1);
+  assert.deepEqual(result.json.resultAdjustments,{duplicateCount:2,unknownIdCount:1});
+  assert.match(result.json.notice,/合并 2 条重复/);assert.match(result.json.notice,/忽略 1 条候选范围外/);
+  assert.equal(result.json.items[0].name,'霸王龙钢架.dwg');
+});
+
 test('mock建议经真实HTTP落库、可恢复和编辑确认，不会自动写分类',async()=>{
   const file=mock.files.find(x=>x.extension==='DWG');const response=await request(mock.port,'/api/ai/classify','POST',{ids:[file.id]});assert.equal(response.status,200);
   const suggestion=response.json.suggestions[0];assert.notEqual(suggestion.id,file.id);assert.equal(suggestion.fileId,file.id);

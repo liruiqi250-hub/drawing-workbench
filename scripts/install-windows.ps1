@@ -78,7 +78,7 @@ if (-not $NoShortcut) {
     if (Test-Path -LiteralPath $shortcutPath) {
         $existing = $shell.CreateShortcut($shortcutPath)
         if ($existing.Arguments -notlike ('*' + $appDirectory + '*')) {
-            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.3.lnk'
+            $shortcutPath = Join-Path $desktop '图纸工作台 V0.5.4.lnk'
         }
     }
     $shortcut = $shell.CreateShortcut($shortcutPath)
@@ -86,9 +86,9 @@ if (-not $NoShortcut) {
     $shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $appDirectory '启动图纸工作台.ps1') + '"'
     $shortcut.WorkingDirectory = $appDirectory
     $shortcut.WindowStyle = 7
-    $shortcut.Description = '图纸工作台 V0.5.3'
+    $shortcut.Description = '图纸工作台 V0.5.4'
     $shortcut.Save()
     Write-Host ('已创建桌面快捷方式：' + $shortcutPath)
 }
-Write-Host 'V0.5.3 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
+Write-Host 'V0.5.4 环境配置完成。个人索引保存在 %LOCALAPPDATA%\DrawingWorkbench\data。'
 if (-not $NoLaunch) { & (Join-Path $appDirectory '启动图纸工作台.ps1') }

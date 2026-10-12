@@ -772,6 +772,8 @@
     state.items = []; state.total = 0; state.page = 1;
     $('result-count').textContent = 'DeepSeek 正在制定检索计划并排列候选…';
     $('results').replaceChildren(el('div', 'empty', '正在分析当前查询与本机候选，最长等待约 100 秒…'));
+    $('ai-search-info').hidden=false;
+    $('ai-search-info').replaceChildren(el('strong','','自然语言找图 · 正在检索'),el('p','','正在处理本次查询与有限候选，请等待；不会自动重复调用。'));
     $('results').setAttribute('aria-busy', 'true'); renderAiControls(); errorFor('ai-search', '');
     try {
       const result = await api('/api/ai/search', { method: 'POST', body: { query, scope: currentAiScope() } });
@@ -785,6 +787,9 @@
     } catch (error) {
       if (request !== state.aiSearchRevision || snapshot !== aiSnapshot() || state.mode !== 'ai') return;
       state.aiSearchStale = true; errorFor('ai-search', error.message);
+      clearSelection('本次 AI 搜索失败，未选中图纸。请手动重试或切回关键词搜索。');
+      $('ai-search-info').hidden=false;
+      $('ai-search-info').replaceChildren(el('strong','','本次 AI 搜索未完成'),el('p','',error.message),el('p','small','可手动重试或切回关键词搜索；程序不会自动重复调用。'));
       $('result-count').textContent = 'AI 搜索失败';
       const box = el('div', 'empty'); box.append(el('strong', '', 'AI 搜索失败'), el('p', '', error.message), actionButton('手动重试 AI 搜索', searchAi));
       $('results').replaceChildren(box);

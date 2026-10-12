@@ -1,6 +1,6 @@
 {
   "name": "drawing-workbench-local",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Windows 本地图纸管理：即时搜索、原图与备份归组、DeepSeek 辅助整理",
   "engines": {
