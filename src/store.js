@@ -175,7 +175,7 @@ function candidateRows(plan,scope={},limit=60,includeText=false){
   const {cte,args,grouped}=buildQuery({...scope,formats:scope.format?[]:formats},groups,includeText),scoreArgs=[];
   const optional=[...new Set((plan.keywords||[]).filter(term=>typeof term==='string'&&term.trim()))].slice(0,12);
   const scoreText="(s.path||' '||s.naming_search||' '||s.project||' '||s.type||' '||s.tags"+(includeText?"||' '||s.content":"")+(grouped?"||' '||COALESCE(sc.project,'')||' '||COALESCE(sc.type,'')||' '||COALESCE(sc.tags,'')":"")+")";
-  const score=[...new Set([...groups.flat(),...optional])].slice(0,40).map(term=>{scoreArgs.push(pattern(term),pattern(term));return "CASE WHEN s.name LIKE ? ESCAPE '\\' THEN 4 ELSE 0 END+CASE WHEN "+scoreText+" LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END";}).join('+')||'0';
+  const score=[...new Set([...groups.flat(),...optional])].map(term=>{scoreArgs.push(pattern(term),pattern(term));return "CASE WHEN s.name LIKE ? ESCAPE '\\' THEN 4 ELSE 0 END+CASE WHEN "+scoreText+" LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END";}).join('+')||'0';
   const rows=db.prepare(cte+`SELECT result.*,(SELECT MAX(${score}) FROM scoped s ${grouped?'LEFT JOIN group_classifications sc ON sc.group_key=s.group_key':''} WHERE ${grouped?'s.group_key=result.group_key':'s.id=result.id'}) ai_score FROM result ORDER BY ai_score DESC,modified DESC LIMIT ?`).all(...args,...scoreArgs,Math.max(20,Math.min(100,Number(limit)||60)));
   return rows.map(row=>{
     const members=grouped?groupRows(row):[row],selected=[],picked=new Set(),classification=grouped?getClassification(row):legacyClassification(row);

@@ -159,3 +159,11 @@ test('必要八主题占满时 optional 证据不足明确记录截断词，同�
   const [candidate]=store.candidateRows({groups,keywords},{backup:'only'},20,true);assert.equal(candidate.evidenceRows.length,9);assert.ok(candidate.evidenceRows.some(row=>row.id===backup.id));assert.deepEqual(candidate.truncatedKeywords,keywords);
   for(const group of groups)assert.ok(candidate.evidenceRows.some(row=>row.content.includes(group[0])));
 });
+
+test('合法八主题各八同义词超过40个唯一词时，后排 optional 仍参与限额前评分',()=>{
+  const groups=Array.from({length:8},(_,i)=>[`必需评分主题${i}标识`,...Array.from({length:7},(_,j)=>`备用评分同义${i}号${j}词`)]),requiredName=groups.map(group=>group[0]).join(' '),keyword='后排独有可选评分标签';
+  assert.equal(new Set(groups.flat()).size,64);
+  const target=add(`${requiredName} 最旧目标.dwg`,'ranking-full-plan');store.classify(target.id,{scope:'version',project:'普通项目',tags:[keyword]});store.db.prepare('UPDATE files SET modified=1 WHERE id=?').run(target.id);
+  for(let i=0;i<20;i++){const member=add(`${requiredName} 普通${i}.dwg`,'ranking-full-plan');store.db.prepare('UPDATE files SET modified=? WHERE id=?').run(100+i,member.id);}
+  const candidates=store.candidateRows({groups,keywords:[keyword]},{},20,false);assert.equal(candidates.length,20);assert.equal(candidates[0].row.id,target.id);assert.ok(candidates[0].evidenceRows.some(row=>row.evidenceOrigin.versionTerms.includes(keyword)));
+});
