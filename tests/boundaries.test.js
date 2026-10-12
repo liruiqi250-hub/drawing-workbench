@@ -94,7 +94,7 @@ test('同文件改名后拒绝旧路径的预览结果，允许当前路径重�
   const original=meta(fixture.file),id=store.upsert(original).id;
   const renamed=path.join(fixture.root,'改名后的图纸.pdf');fs.renameSync(fixture.file,renamed);
   assert.equal(store.upsert(meta(renamed)).id,id);
-  const version=`${original.modified}-${original.size}`;
+  const version=store.contentVersion(store.getRaw(id));
   assert.equal(store.setPreview(id,version,{status:'error',text:'旧任务错误',preview:false},fixture.file),false);
   assert.equal(store.getRaw(id).content_status,'pending');
   assert.equal(store.setPreview(id,version,{status:'ready',text:'当前路径文字',preview:true,pages:1},renamed),true);

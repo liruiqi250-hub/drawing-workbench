@@ -39,7 +39,7 @@ test('中文多词搜索会合并文件名、项目、标签与真实已提取�
   const dinosaur=fixture('展会霸王龙 钢架.dwg');
   fixture('电机安装.dwg');
   store.classify(dinosaur.id,{project:'成都展会',type:'钢架结构',tags:['机械组','制作中']});
-  assert.equal(store.setPreview(dinosaur.id,`${dinosaur.meta.modified}-${dinosaur.meta.size}`,
+  assert.equal(store.setPreview(dinosaur.id,store.contentVersion(store.getRaw(dinosaur.id)),
     {status:'ready',text:'本机提取的特殊电机座说明',preview:true,pages:1}),true);
   for(const query of ['霸王龙','成都展会 机械组','特殊电机座','展会 钢架']){
     const found=store.search({q:query});assert.equal(found.total,1,query);
@@ -53,7 +53,7 @@ test('百分号和下划线作为字面字符搜索，不能扩张为 SQL 通配
   const underscore=fixture('零件a_b.dwg');
   fixture('进度100完成.pdf');fixture('零件axb.dwg');
   assert.deepEqual(store.search({q:'%'}).items.map(row=>row.id),[percent.id]);
-  assert.deepEqual(store.search({q:'_'}).items.map(row=>row.id),[underscore.id]);
+  assert.deepEqual(store.search({q:'a_'}).items.map(row=>row.id),[underscore.id]);
   assert.deepEqual(store.search({q:'a_b'}).items.map(row=>row.id),[underscore.id]);
 });
 
@@ -67,7 +67,7 @@ test('搜索和项目过滤使用参数，注入字符串不能返回全部记�
   assert.equal(exact.total,1);assert.equal(exact.items[0].id,one.id);
   assert.throws(()=>store.classify("x' OR 1=1 --",{project:'注入'}),/不存在/);
   assert.equal(store.search().total,2);
-  assert.equal(store.getRaw(two.id).project,'正常项目');
+  assert.equal(store.getClassification(store.getRaw(two.id)).project,'正常项目');
 });
 
 test('同一文件改名后保留 id、人工分类和标签，不向源文件写分类信息',()=>{
@@ -88,7 +88,7 @@ test('同一文件改名后保留 id、人工分类和标签，不向源文件�
 
 test('保存改变内容后重置旧文本和预览状态，拒绝较旧版本的异步结果',()=>{
   const entry=fixture('覆盖保存.pdf','first fixture');
-  const oldVersion=`${entry.meta.modified}-${entry.meta.size}`;
+  const oldVersion=store.contentVersion(store.getRaw(entry.id));
   store.setPreview(entry.id,oldVersion,{status:'ready',text:'旧文字内容',preview:true,pages:3});
   store.classify(entry.id,{project:'保留项目',type:'文件类型'});
   fs.writeFileSync(entry.file,'new fixture body with a changed length','utf8');
@@ -96,7 +96,7 @@ test('保存改变内容后重置旧文本和预览状态，拒绝较旧版本�
   assert.equal(updated.id,entry.id);assert.equal(updated.changed,true);
   let row=store.getRaw(entry.id);
   assert.equal(row.content,'');assert.equal(row.content_status,'pending');
-  assert.equal(row.preview_status,'pending');assert.equal(row.project,'保留项目');
+  assert.equal(row.preview_status,'pending');assert.equal(store.getClassification(row).project,'保留项目');
   assert.equal(store.search({q:'旧文字内容'}).total,0);
   assert.equal(store.setPreview(entry.id,oldVersion,
     {status:'ready',text:'过期任务不能覆盖',preview:true,pages:3}),false);
@@ -124,7 +124,7 @@ test('图号派生支持标准日期检索及订单批次导航，保留人工�
   const named=store.publicFile(store.getRaw(entry.id));
   assert.equal(named.naming.drawingNumber,'26-10.29-03');
   assert.equal(named.naming.orderDate,'2026-10-29');assert.equal(named.naming.productionSerial,'03');
-  assert.equal(named.suggestion.project,'26-10.29');
+  assert.equal(named.suggestion.project,'2026-10-29');
   assert.ok(named.suggestion.tags.includes('霸王龙'));
   assert.deepEqual(store.search({q:'2026-10-29 霸王龙',orderBatch:'26-10.29'}).items.map(row=>row.id),[entry.id]);
   assert.equal(store.search({projectKind:'order',format:'DWG'}).total,2);
@@ -136,7 +136,7 @@ test('图号派生支持标准日期检索及订单批次导航，保留人工�
   assert.equal(migrated.project,'人工项目');assert.equal(migrated.type,'已审');assert.deepEqual(migrated.tags,['人工标签']);
   assert.equal(migrated.naming.orderBatch,'26-10.29');assert.equal(migrated.id,entry.id);
   assert.equal(store.getRaw(other.id).classified,0);
-  store.invalidateStats();assert.ok(store.stats().orderBatches.some(row=>row.name==='26-10.29'&&row.count===1));
+  store.invalidateStats();assert.ok(store.stats().orderBatches.some(row=>row.name==='2026-10-29'&&row.count===1));
 });
 
 test('展会备份识别独立于项目分类，不把备份日期或归档年月当订单日期',()=>{

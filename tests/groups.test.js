@@ -28,7 +28,7 @@ test('非备份命名目录服从明确映射，停用规则可逆且不覆盖�
   store.classify(original.id,{project:'已确认展会',type:'钢架',tags:['保留']});mapping();
   assert.equal(store.search().total,1);assert.equal(store.search().items[0].id,original.id);assert.equal(store.search({pending:true}).total,0);assert.equal(store.search({pending:true,q:'展会'}).matchingFiles,0);assert.equal(store.stats().pending,0);assert.equal(store.getRaw(backup.id).is_backup,1);
   config.saveSettings({groupingRules:[]});store.migrateGroups();store.invalidateStats();assert.equal(store.search().total,2);assert.equal(store.getRaw(backup.id).is_backup,0);
-  assert.equal(store.getRaw(original.id).project,'已确认展会');assert.equal(store.getRaw(original.id).tags,'["保留"]');
+  assert.equal(store.getClassification(store.getRaw(original.id)).project,'已确认展会');assert.equal(JSON.stringify(store.getClassification(store.getRaw(original.id)).tags),'["保留"]');
 });
 test('只有备份时选备份时间最新者；新增原图即时优先，失效时回退，磁盘文件仍存在',()=>{
   const a=add('展会西方龙 2026-03-02 14_41_24.dwg'),b=add('展会西方龙 2026-03-02 14_52_26.dwg');

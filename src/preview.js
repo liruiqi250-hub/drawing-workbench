@@ -6,7 +6,7 @@ const config=require('./config');
 const store=require('./store');
 const CACHE_DIR=path.join(config.DATA_DIR,'cache');fs.mkdirSync(CACHE_DIR,{recursive:true});
 const tasks=new Map(),queue=[],attempts=new Map();let running=0;
-function version(row){return `${row.modified}-${row.size}`;}
+function version(row){return store.contentVersion(row);}
 function cachePath(row){return path.join(CACHE_DIR,`${row.id}-${version(row)}.png`);}
 const capabilities={pdfPreview:fs.existsSync(config.PYTHON),dwgPreview:fs.existsSync('C:\\Program Files\\Common Files\\Autodesk Shared\\Thumbnail\\AcThumbnail16.dll')};
 function execute(row){return new Promise(resolve=>{

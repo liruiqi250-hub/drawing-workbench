@@ -92,7 +92,7 @@ async function processPath(p,retry=0,kind){
     if(stopped||token!==epoch||!config.isAllowed(p,config.getSettings(),false))return;
     if(stat.isSymbolicLink())return;
     if(stat.isDirectory()){if(kind==='change')return;if(kind)queueTree(p);else await visitTree(p,'',epoch,false);}
-    else if(stat.isFile()&&config.isAllowed(p,settings))store.upsert(meta(p,stat));
+    else if(stat.isFile()&&config.isAllowed(p,settings))store.upsert(meta(p,stat),'',{forceInvalidate:kind==='change'});
   }catch(e){
     if(stopped||token!==epoch)return;
     if(e.code==='ENOENT'||e.code==='ENOTDIR'){
@@ -113,7 +113,7 @@ function queueEvent(p,kind){
   state.lastEventAt=Date.now();
   if(!config.isAllowed(p,config.getSettings(),false))return;
   if(kind==='change'&&!config.getSettings().extensions.includes(path.extname(p).toLowerCase()))return;
-  pending.set(p,kind);
+  pending.set(p,pending.get(p)==='change'||kind==='change'?'change':kind);
   if(pending.size>10000){pending.clear();scan('watch-overflow');return;}
   if(!eventTimer){eventTimer=setTimeout(()=>drainEvents().catch(console.error),80);eventTimer.unref();}
 }

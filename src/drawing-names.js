@@ -11,6 +11,14 @@ function validDate(year, month, day) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+function normalizeOrderBatch(value) {
+  const text=cleanText(value,80);
+  const match=text.match(/^(?:(20\d{2})-(\d{1,2})-(\d{1,2})|(\d{2})-(\d{1,2})\.(\d{1,2}))([a-z]?)$/i);
+  if(!match)return text;
+  const year=Number(match[1]||2000+Number(match[4])),month=Number(match[2]||match[5]),day=Number(match[3]||match[6]);
+  return validDate(year,month,day)?`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}${match[7].toUpperCase()}`:text;
+}
+
 function specificExhibitionName(value) {
   // “展会霸王龙”“展会样式”只说明用途；只有展会前的明确名称才作为项目名。
   const match = value.match(/^([\p{L}\p{N}][\p{L}\p{N}· .-]{0,40}?展会)(?=$|[\s_\-（(]|平面图|结构图|总图|布置图|布局图|方案图|图纸|CAD|PDF)/u);
@@ -26,7 +34,7 @@ function parseDrawingName(name, folderNames = []) {
   const folders = allFolders.slice(-3);
   let baseName = leaf.replace(/\.[A-Za-z][A-Za-z0-9]{0,11}$/, '').trim();
   const result = {
-    drawingNumber: '', orderBatch: '', orderDate: '', productionSerial: '',
+    drawingNumber: '', orderBatch: '', orderBatchKey: '', orderDate: '', productionSerial: '',
     productName: '', productSize: '', projectKind: 'unknown', searchText: '', notes: [],
     isBackup: false, backupTimestamp: '', backupBasis: '', backupLabel: '', baseName: '', exhibitionName: ''
   };
@@ -73,6 +81,7 @@ function parseDrawingName(name, folderNames = []) {
         descriptionBeforeNumber = prefix;
       }
       result.orderBatch = normalized.slice(batchStart, batchEnd);
+      result.orderBatchKey = normalizeOrderBatch(result.orderBatch);
       result.orderDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
       result.projectKind = 'order';
       tail = normalized.slice(batchEnd);
@@ -123,7 +132,7 @@ function parseDrawingName(name, folderNames = []) {
   }
   if (exhibition && !result.exhibitionName) result.notes.push('仅识别到展会用途，未指定具体展会名称，归入展会项目。');
 
-  const tokens = [result.baseName, result.drawingNumber, result.orderBatch, result.orderDate, result.productionSerial,
+  const tokens = [result.baseName, result.drawingNumber, result.orderBatch, result.orderBatchKey, result.orderDate, result.productionSerial,
     result.productName, result.productSize, result.exhibitionName, exhibition ? '展会项目' : ''];
   if (result.orderDate) {
     const [year, month, day] = result.orderDate.split('-');
@@ -135,4 +144,4 @@ function parseDrawingName(name, folderNames = []) {
   return result;
 }
 
-module.exports = {parseDrawingName};
+module.exports = {parseDrawingName,normalizeOrderBatch};

@@ -66,8 +66,8 @@ test('真实 Windows 递归监听和扫描衔接',{timeout:40000},async t=>{
     const row=at(drawing);
     assert.equal(row.id,originalId);
     assert.equal(row.modified,Number(fs.statSync(drawing,{bigint:true}).mtimeMs));
-    assert.equal(row.project,'已确认测试项目');
-    assert.deepEqual(JSON.parse(row.tags),['人工标签']);
+    assert.equal(store.getClassification(row).project,'已确认测试项目');
+    assert.deepEqual(store.getClassification(row).tags,['人工标签']);
     assert.equal(fs.readFileSync(drawing,'utf8'),body);
   });
 
@@ -79,8 +79,8 @@ test('真实 Windows 递归监听和扫描衔接',{timeout:40000},async t=>{
     await until(()=>at(drawing)?.alive===1&&!at(oldDrawing)?.alive,'目录改名没有完成索引迁移');
     const row=at(drawing);
     assert.equal(row.id,originalId);
-    assert.equal(row.project,'已确认测试项目');
-    assert.deepEqual(JSON.parse(row.tags),['人工标签']);
+    assert.equal(store.getClassification(row).project,'已确认测试项目');
+    assert.deepEqual(store.getClassification(row).tags,['人工标签']);
     assert.equal(store.search({q:'递归保存测试'}).total,1);
     assert.equal(store.getRaw(originalId).path,drawing);
   });
