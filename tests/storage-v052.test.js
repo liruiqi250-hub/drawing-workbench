@@ -111,3 +111,18 @@ test('八个独立主题和额外独立备份条件需要第九条证据，所�
   const candidates=store.candidateRows({groups},{backup:'only'},20,true);assert.equal(candidates.length,1);assert.equal(candidates[0].evidenceRows.length,9);assert.ok(candidates[0].evidenceRows.some(row=>row.id===backup.id));
   for(const group of groups)assert.ok(candidates[0].evidenceRows.some(row=>row.content.includes(group[0])),group[0]);
 });
+
+test('十个备份中最旧版本独有 legacy 标签必须保留真实 owner，不能由共同并集冒充新版命中',()=>{
+  const members=[];for(let i=0;i<10;i++)members.push(add(`标签真实归属 2026-03-02 14_52_${String(i).padStart(2,'0')}.dwg`,'legacy-owner'));
+  store.classify(members[0].id,{scope:'version',project:'历史项目',tags:['唯一旧版本标签']});
+  const classification=store.getClassification(raw(members[9]));assert.equal(classification.source,'legacy');assert.ok(classification.tags.includes('唯一旧版本标签'));
+  const candidates=store.candidateRows({groups:[['唯一旧版本标签']]},{backup:'only'},20,false);assert.equal(candidates.length,1);assert.equal(candidates[0].row.id,members[9].id);
+  const evidence=candidates[0].evidenceRows;assert.ok(evidence.some(row=>row.id===members[0].id));assert.equal(evidence.length,1);assert.equal(evidence[0].evidenceOrigin.kind,'version');assert.deepEqual(evidence[0].evidenceOrigin.versionTerms,['唯一旧版本标签']);assert.deepEqual(evidence[0].evidenceOrigin.groupTerms,[]);assert.equal(evidence[0].tags,'["唯一旧版本标签"]');
+});
+
+test('明确共同确认标签可以作为 group 来源证据，但不伪造各物理版本 legacy 标签',()=>{
+  const original=add('共同标签来源.dwg','group-origin');add('共同标签来源 2026-03-02 14_52_26.dwg','group-origin');
+  store.classify(original.id,{project:'确认共同项目',tags:['整组确认专用标签']});
+  const candidates=store.candidateRows({groups:[['整组确认专用标签']]},{},20,false);assert.equal(candidates.length,1);const evidence=candidates[0].evidenceRows;
+  assert.equal(evidence.length,1);assert.equal(evidence[0].tags,'[]');assert.equal(evidence[0].evidenceOrigin.kind,'group');assert.deepEqual(evidence[0].evidenceOrigin.versionTerms,[]);assert.deepEqual(evidence[0].evidenceOrigin.groupTerms,['整组确认专用标签']);assert.deepEqual(evidence[0].evidenceOrigin.groupClassification.tags,['整组确认专用标签']);assert.equal(evidence[0].evidenceOrigin.groupClassification.source,'manual');
+});
