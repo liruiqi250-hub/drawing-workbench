@@ -1,5 +1,5 @@
 'use strict';
-const {app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, session} = require('electron');
+const {app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, session, dialog} = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
@@ -59,7 +59,14 @@ else {
     const pdf = new BrowserWindow({width:1100, height:850, minWidth:700, minHeight:500, parent:window, title:'图纸工作台 · PDF', autoHideMenuBar:true, webPreferences:policy.webPreferences()});
     restrict(pdf.webContents, value => policy.pdfUrl(value, backend.origin));
     pdf.webContents.setWindowOpenHandler(() => ({action:'deny'}));
-    pdf.loadURL(url).catch(() => { if (!pdf.isDestroyed()) pdf.close(); });
+    pdf.loadURL(url).catch(async error => {
+      if (pdf.isDestroyed()) return;
+      const code = /^ERR_[A-Z_]+$/.test(error?.code || '') ? error.code : 'UNKNOWN';
+      log(`PDF 载入失败 code=${code}`);
+      try {
+        await dialog.showMessageBox(pdf, {type:'error', title:'图纸工作台 · PDF', message:'PDF 暂时无法显示', detail:'请关闭提示后重新打开。若仍失败，请确认原图仍可访问，并重试图纸工作台。', buttons:['关闭提示'], defaultId:0, noLink:true});
+      } finally { if (!pdf.isDestroyed()) pdf.close(); }
+    }).catch(() => { if (!pdf.isDestroyed()) pdf.close(); });
   }
   app.on('second-instance', restore);
   app.on('activate', restore);

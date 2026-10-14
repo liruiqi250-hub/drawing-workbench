@@ -107,21 +107,21 @@ test('IPC 必须来自已登记窗口主 frame；PDF 安全首选项没有 prelo
   assert.deepEqual(policy.webPreferences(),{nodeIntegration:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false});
 });
 
-async function mainFixture({lock=true,trayFails=false,stopError=false}={}) {
+async function mainFixture({lock=true,trayFails=false,stopError=false,pdfLoadFailure=false}={}) {
   const app=new EventEmitter();app.isPackaged=false;app.requestSingleInstanceLock=()=>lock;app.getPath=()=>data;app.whenReady=()=>Promise.resolve();app.quit=()=>{app.quits=(app.quits||0)+1;};
-  const windows=[];const handlers=new Map();const backend={origin,start:async()=>origin,stop:async()=>{backend.stops=(backend.stops||0)+1;if(stopError)throw new Error('AI 任务正在进行');},locate:async()=>({ok:true})};
+  const windows=[],dialogs=[],logs=[];const handlers=new Map();const backend={origin,start:async()=>origin,stop:async()=>{backend.stops=(backend.stops||0)+1;if(stopError)throw new Error('AI 任务正在进行');},locate:async()=>({ok:true})};
   class Window extends EventEmitter {
     constructor(options){super();this.options=options;this.webContents=new EventEmitter();this.webContents.mainFrame={url:''};this.webContents.setWindowOpenHandler=fn=>{this.openHandler=fn;};this.webContents.isDestroyed=()=>false;windows.push(this);}
     isDestroyed(){return false;}isMinimized(){return true;}restore(){this.restored=true;}show(){this.shown=true;}focus(){this.focused=true;}hide(){this.hidden=true;}
-    async loadURL(url){this.webContents.mainFrame.url=url;}async loadFile(file){this.webContents.mainFrame.url=require('node:url').pathToFileURL(file).href;}close(){this.closed=true;}
+    async loadURL(url){if(pdfLoadFailure&&url.includes('/raw')){const error=new Error('PRIVATE_PATH_must_not_be_logged');error.code='ERR_CONNECTION_REFUSED';throw error;}this.webContents.mainFrame.url=url;}async loadFile(file){this.webContents.mainFrame.url=require('node:url').pathToFileURL(file).href;}close(){this.closed=true;}
   }
   class Tray extends EventEmitter {constructor(){super();if(trayFails)throw new Error();}setToolTip(){}setContextMenu(menu){this.menu=menu;}destroy(){this.destroyed=true;}}
   const sessionObject=new EventEmitter();sessionObject.setPermissionRequestHandler=fn=>{sessionObject.request=fn;};sessionObject.setPermissionCheckHandler=fn=>{sessionObject.check=fn;};
-  const electron={app,BrowserWindow:Window,ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},Tray,Menu:{buildFromTemplate:value=>value},nativeImage:{createFromPath:()=>({isEmpty:()=>false}),createFromDataURL:()=>({isEmpty:()=>false})},shell:{showItemInFolder:()=>{}},session:{defaultSession:sessionObject}};
+  const electron={app,BrowserWindow:Window,ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},Tray,Menu:{buildFromTemplate:value=>value},nativeImage:{createFromPath:()=>({isEmpty:()=>false}),createFromDataURL:()=>({isEmpty:()=>false})},shell:{showItemInFolder:()=>{}},session:{defaultSession:sessionObject},dialog:{showMessageBox:async(_window,options)=>{dialogs.push(options);}}};
   const filename=path.join(root,'desktop','main.cjs');const source=fs.readFileSync(filename,'utf8');
-  vm.runInNewContext(source,{require:name=>name==='electron'?electron:name==='./backend.cjs'?{createBackend:()=>backend}:name==='./policy.cjs'?policy:name==='./desktop-version.json'?{version:'0.6.0'}:name==='node:fs'?{existsSync:()=>false,mkdirSync:()=>{},appendFileSync:()=>{}}:require(name),__dirname:path.dirname(filename),process:{env:{DRAWING_WORKBENCH_DATA:data,LOCALAPPDATA:data},resourcesPath:data},URL,console});
+  vm.runInNewContext(source,{require:name=>name==='electron'?electron:name==='./backend.cjs'?{createBackend:()=>backend}:name==='./policy.cjs'?policy:name==='./desktop-version.json'?{version:'0.6.0'}:name==='node:fs'?{existsSync:()=>false,mkdirSync:()=>{},appendFileSync:(_file,text)=>{logs.push(text);}}:require(name),__dirname:path.dirname(filename),process:{env:{DRAWING_WORKBENCH_DATA:data,LOCALAPPDATA:data},resourcesPath:data},URL,console});
   await new Promise(resolve=>setImmediate(resolve));
-  return {app,windows,handlers,backend,sessionObject};
+  return {app,windows,handlers,backend,sessionObject,dialogs,logs};
 }
 test('桌面主入口：第二实例不启动服务；恢复现有窗口并关闭到托盘',async()=>{
   const second=await mainFixture({lock:false});assert.equal(second.windows.length,0);assert.equal(second.app.quits,1);
@@ -147,4 +147,11 @@ test('桌面启动桥接只允许精确本地启动页主 frame',async()=>{
   assert.equal(f.handlers.get('drawing:startup-state')(event),null);assert.equal(f.handlers.get('drawing:startup-retry')(event),false);assert.equal(f.handlers.get('drawing:startup-quit')(event),false);
   await win.loadFile(path.join(root,'desktop','startup.html'));assert.equal(typeof f.handlers.get('drawing:startup-state')(event).busy,'boolean');
   assert.equal(f.handlers.get('drawing:startup-state')({...event,senderFrame:{url:event.senderFrame.url}}),null);
+});
+test('PDF 真实加载失败有中文提示，只记录安全错误代码；成功不弹错误',async()=>{
+  for(const failure of [false,true]) {
+    const f=await mainFixture({pdfLoadFailure:failure});f.windows[0].openHandler({url:origin+`/api/files/${id}/raw`});await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(f.dialogs.length,failure?1:0);
+    if(failure){assert.match(f.dialogs[0].message,/PDF 暂时无法显示/);assert.equal(f.windows[1].closed,true);assert.match(f.logs.join(''),/ERR_CONNECTION_REFUSED/);assert.equal(JSON.stringify(f.dialogs).includes('PRIVATE_PATH'),false);assert.equal(f.logs.join('').includes('PRIVATE_PATH'),false);}
+  }
 });
