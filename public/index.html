@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>图纸工作台 V0.5.5</title>
+  <title>图纸工作台 V0.6.0</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -12,7 +12,7 @@
   <div class="app">
     <header class="topbar">
       <div class="logo" aria-hidden="true">图</div>
-      <div class="identity"><div class="app-name">图纸工作台 <span id="app-version" class="small">V0.5.5</span></div><div class="small">本机图纸索引 · 即时搜索 · 分类管理</div></div>
+      <div class="identity"><div class="app-name">图纸工作台 <span id="app-version" class="small">V0.6.0</span></div><div class="small">本机图纸索引 · 即时搜索 · 分类管理</div></div>
       <div id="connection-status" class="connection"><span class="status-dot"></span><span>正在连接本机服务</span></div>
       <button id="settings-open" type="button">设置</button>
     </header>
@@ -54,7 +54,7 @@
         </div>
       </main>
     </div>
-    <footer class="footer"><span id="feedback" class="feedback" role="status" aria-live="polite">关键词搜索使用本机数据，AI 仅手动触发。</span><span>V0.5.5 · AI 仅手动触发 · 原图只读</span></footer>
+    <footer class="footer"><span id="feedback" class="feedback" role="status" aria-live="polite">关键词搜索使用本机数据，AI 仅手动触发。</span><span>V0.6.0 · AI 仅手动触发 · 原图只读</span></footer>
   </div>
   <form id="ai-settings-form"></form>
   <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
@@ -83,7 +83,7 @@
         <fieldset><legend>原图与备份归组</legend>
           <label class="check-row"><input id="setting-grouping" type="checkbox" checked><span>搜索时折叠备份，默认显示原图</span></label>
           <p id="grouping-summary" class="notice"></p>
-          <div class="naming-rule-guide"><strong>已启用的保守归组规则 · V0.5.5</strong><p>同一目录内，去掉名称末尾有效的备份日期与时分秒后，基础名及格式完全一致才归组。支持多层时间戳；PDF 的“模型 / Model / Layout”后缀保留。不同格式、不同产品名、不同序号独立显示。</p><p>下方明确指定的备份目录可还原来源目录，再按精确基础名归组。规则以最长匹配目录优先，不级联映射。不按跨目录同名、文件大小或单独图号合并。</p><p>原图优先；只有备份时显示最近备份并标注“仅找到备份”。关键词可命中组内任意版本，点开详情查看所有版本。取消上方开关可逐个查看原始文件，文件始终保留。</p></div>
+          <div class="naming-rule-guide"><strong>已启用的保守归组规则 · V0.6.0</strong><p>同一目录内，去掉名称末尾有效的备份日期与时分秒后，基础名及格式完全一致才归组。支持多层时间戳；PDF 的“模型 / Model / Layout”后缀保留。不同格式、不同产品名、不同序号独立显示。</p><p>下方明确指定的备份目录可还原来源目录，再按精确基础名归组。规则以最长匹配目录优先，不级联映射。不按跨目录同名、文件大小或单独图号合并。</p><p>原图优先；只有备份时显示最近备份并标注“仅找到备份”。关键词可命中组内任意版本，点开详情查看所有版本。取消上方开关可逐个查看原始文件，文件始终保留。</p></div>
           <div id="grouping-rules-body"></div><button id="add-group-rule" type="button">添加备份来源规则</button><p class="field-hint">填写真实来源路径；原图目录不能与备份目录相同或位于其内部。停用或移除规则后重新计算归组，不修改磁盘文件。</p>
         </fieldset>
         <fieldset><legend>分类规则</legend><div class="naming-rule-guide"><strong>按图号识别订单与产品</strong><p><code>26-10.29-03 霸王龙4米</code>：订单批次 26-10.29，下单日期 2026-10-29，生产单序号 03，产品名称 霸王龙，尺寸 4米。</p><p>展会按名称或目录识别，例如“郑州展会”；只有“展会霸王龙3米”“展会样式”时归入通用展会项目。名称末尾的日期与时分秒作为备份参考时间，单独显示，不作为下单日期。</p><p>命名解析在本机自动完成，识别结果待核对；不会覆盖已确认的手工分类。</p></div><p class="small">本机命名与关键词规则提供分类建议，需人工确认；这不是 AI 识别。下方可补充匹配文件名或路径的关键词。</p><div class="rules-table-wrap"><table class="rules-table"><thead><tr><th scope="col">关键词</th><th scope="col">建议项目</th><th scope="col">建议类型</th><th scope="col">操作</th></tr></thead><tbody id="rules-body"></tbody></table></div><button id="add-rule" type="button">添加分类规则</button><p class="field-hint">项目和类型至少填写一项；删除规则不会清除已确认的分类。</p></fieldset>
@@ -99,7 +99,7 @@
           <div class="field-actions"><button id="ai-settings-save" form="ai-settings-form" type="submit" class="primary">保存 DeepSeek 设置</button><button id="ai-test-button" type="button">测试连接</button><button id="ai-clear-key" type="button">清除已保存密钥</button><span id="ai-dirty-note" class="small">与扫描设置分别保存</span></div>
           <p id="ai-usage" class="field-hint" role="status">连接测试只发送简短测试消息，不发送图纸资料。</p>
         </fieldset>
-        <fieldset><legend>索引与维护</legend><dl class="status-grid"><dt>程序版本</dt><dd id="setting-version">V0.5.5</dd><dt>索引引擎</dt><dd id="setting-engine">—</dd><dt>索引数量</dt><dd id="setting-total">—</dd><dt>扫描状态</dt><dd id="setting-index-status">—</dd><dt>最近完成</dt><dd id="setting-last-scan">—</dd><dt>监听目录</dt><dd id="setting-watching">—</dd></dl><div id="watch-errors" class="watch-errors" hidden></div><div id="scan-errors" class="watch-errors" hidden></div><div class="maintenance-actions"><button id="settings-scan" type="button">重新扫描</button><button id="backup-button" type="button">备份本地索引</button></div><p class="field-hint">备份包含索引、分类和设置，不复制原始图纸；不包含 API Key。</p><p id="backup-result" class="backup-result break-anywhere" hidden></p></fieldset>
+        <fieldset><legend>索引与维护</legend><dl class="status-grid"><dt>程序版本</dt><dd id="setting-version">V0.6.0</dd><dt>索引引擎</dt><dd id="setting-engine">—</dd><dt>索引数量</dt><dd id="setting-total">—</dd><dt>扫描状态</dt><dd id="setting-index-status">—</dd><dt>最近完成</dt><dd id="setting-last-scan">—</dd><dt>监听目录</dt><dd id="setting-watching">—</dd></dl><div id="watch-errors" class="watch-errors" hidden></div><div id="scan-errors" class="watch-errors" hidden></div><div class="maintenance-actions"><button id="settings-scan" type="button">重新扫描</button><button id="backup-button" type="button">备份本地索引</button></div><p class="field-hint">备份包含索引、分类和设置，不复制原始图纸；不包含 API Key。</p><p id="backup-result" class="backup-result break-anywhere" hidden></p></fieldset>
       </div>
       <div class="settings-footer"><span id="settings-dirty-note" class="small">正在加载设置…</span><div><button id="settings-cancel" type="button">关闭</button><button id="settings-save" type="submit" class="primary" disabled>保存设置</button></div></div>
     </form>

@@ -1,0 +1,33 @@
+{
+  "appId": "cn.drawingworkbench.desktop",
+  "productName": "图纸工作台",
+  "electronVersion": "44.7.2",
+  "asar": true,
+  "npmRebuild": false,
+  "directories": {"output": "../dist/desktop", "buildResources": "build-assets"},
+  "files": ["*.cjs", "desktop-version.json", "startup.html", "startup.css", "startup.js", "package.json", "build-assets/app.png", "build-assets/app.ico", "!node_modules"],
+  "extraResources": [{"from": "../.desktop-backend", "to": "backend", "filter": ["**/*"]}],
+  "win": {
+    "target": [{"target":"nsis","arch":["x64"]},{"target":"zip","arch":["x64"]}],
+    "icon": "build-assets/app.ico",
+    "artifactName": "DrawingWorkbench-${version}-windows-${arch}.${ext}",
+    "requestedExecutionLevel": "asInvoker",
+    "signAndEditExecutable": true
+  },
+  "nsis": {
+    "artifactName": "DrawingWorkbench-Setup-${version}-${arch}.exe",
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "图纸工作台",
+    "uninstallDisplayName": "图纸工作台",
+    "deleteAppDataOnUninstall": false,
+    "installerLanguages": ["zh_CN","en_US"],
+    "language": "2052",
+    "displayLanguageSelector": false,
+    "runAfterFinish": false
+  }
+}

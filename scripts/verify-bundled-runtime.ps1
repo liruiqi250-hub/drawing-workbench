@@ -4,7 +4,7 @@ $manifestPath=Join-Path $appDirectory 'bundled-runtime.json'
 if(-not (Test-Path -LiteralPath $manifestPath)){throw '当前目录没有离线运行时校验清单。'}
 $bundle=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $runtimeRoot=[IO.Path]::GetFullPath((Join-Path $appDirectory 'runtime'))
-if($bundle.version -ne '0.5.5' -or -not $bundle.files.Count){throw '离线运行时清单版本不符或为空。'}
+if($bundle.version -ne '0.6.0' -or -not $bundle.files.Count){throw '离线运行时清单版本不符或为空。'}
 $expected=New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach($item in $bundle.files){
     $target=[IO.Path]::GetFullPath((Join-Path $appDirectory $item.path))

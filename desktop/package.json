@@ -1,0 +1,16 @@
+{
+  "name": "drawing-workbench-desktop",
+  "productName": "图纸工作台",
+  "version": "0.6.0",
+  "description": "Windows 本地图纸管理桌面版",
+  "author": "图纸工作台",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "main.cjs",
+  "scripts": {
+    "build": "electron-builder --win nsis zip --x64 --config electron-builder.json"
+  },
+  "devDependencies": {
+    "electron-builder": "26.15.3"
+  }
+}
