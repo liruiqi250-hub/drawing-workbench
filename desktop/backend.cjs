@@ -3,23 +3,31 @@ const http = require('node:http');
 const path = require('node:path');
 const fs = require('node:fs');
 const {spawn} = require('node:child_process');
+// NODE_USE_ENV_PROXY may be enabled on the host; local service IPC never uses a proxy.
+const localAgent = new http.Agent({keepAlive:false, proxyEnv:{}});
 
 function requestJson(origin, route, method = 'GET') {
   return new Promise((resolve, reject) => {
-    const req = http.request(new URL(route, origin), {method, headers: {'X-Requested-With': 'DrawingWorkbench', ...(method === 'POST' ? {'Content-Type':'application/json'} : {})}}, res => {
+    const base = new URL(origin), target = new URL(route, base);
+    if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1' || base.username || base.password || target.origin !== base.origin || !route.startsWith('/')) throw new Error('仅允许连接本机图纸服务。');
+    const req = http.request(target, {method, agent:localAgent, headers: {'X-Requested-With': 'DrawingWorkbench', ...(method === 'POST' ? {'Content-Type':'application/json'} : {})}}, res => {
       let data = '';
       res.setEncoding('utf8');
       res.on('data', chunk => { data += chunk; if (data.length > 2 * 1024 * 1024) req.destroy(new Error('响应内容过大。')); });
       res.on('end', () => {
         try {
           const value = JSON.parse(data);
-          if (res.statusCode !== 200) throw new Error('后台服务未返回有效响应。');
+          if (res.statusCode !== 200) {
+            const message = route === '/api/system/shutdown' && res.statusCode === 409 ? 'AI 任务正在进行，请等任务完成后再退出或升级。' : res.statusCode === 503 ? '后台正在退出，请稍后重试。' : '后台服务未返回有效响应。';
+            reject(new Error(message)); return;
+          }
           resolve(value);
         } catch { reject(new Error('后台服务未返回有效响应。')); }
       });
       res.on('error', reject);
     });
-    req.setTimeout(1800, () => req.destroy(new Error('后台服务响应超时。')));
+    const timeout = method === 'POST' && ['/api/backup', '/api/system/shutdown'].includes(route) ? 30000 : 1800;
+    req.setTimeout(timeout, () => req.destroy(new Error('后台服务响应超时。')));
     req.on('error', reject);
     req.end(method === 'POST' ? '{}' : undefined);
   });
@@ -58,6 +66,9 @@ function createBackend(options, dependencies = {}) {
     if (!expected(latest)) throw new Error('后台身份已变化，已保留该服务。');
     const backup = await request('/api/backup', 'POST');
     if (backup?.ok !== true) throw new Error('后台备份未成功，已保留该服务。');
+    const afterBackup = await request('/api/status');
+    if (!afterBackup?.ai || typeof afterBackup.ai.busy !== 'boolean') throw new Error('无法确认 AI 任务状态，已保留后台服务。');
+    if (afterBackup.ai.busy) throw new Error('备份期间开始了 AI 任务，请等任务完成后再退出或升级。');
     // Recheck after backup: never send shutdown after another service replaces it.
     if (!expected(await probe())) throw new Error('后台身份已变化，已保留该服务。');
     const stopped = await request('/api/system/shutdown', 'POST');

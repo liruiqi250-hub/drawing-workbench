@@ -60,6 +60,13 @@ test('桌面后台：备份失败与备份后身份变化都不发 shutdown',asy
     await assert.rejects(f.backend.start(),/备份|身份/);assert.deepEqual(posts,['/api/backup']);
   }
 });
+test('桌面后台：备份期间新 AI 任务开始或状态缺失时不关闭',async()=>{
+  for(const after of [{ai:{busy:true}},{}]) {
+    const posts=[];let statuses=0;
+    const f=fixture({request:async(route,method)=>{if(method==='POST')posts.push(route);if(route==='/api/health')return health({version:'0.5.5'});if(route==='/api/status')return ++statuses===1?{ai:{busy:false}}:after;if(route==='/api/backup')return {ok:true};}});
+    await assert.rejects(f.backend.start(),/AI|任务状态/);assert.deepEqual(posts,['/api/backup']);
+  }
+});
 test('桌面后台：无响应或无效服务不被当作空闲端口',async()=>{
   const f=fixture({request:async()=>{throw new Error('timeout');}});await assert.rejects(f.backend.start(),/无法确认身份/);assert.equal(f.calls.some(call=>call[0]==='spawn'),false);
 });

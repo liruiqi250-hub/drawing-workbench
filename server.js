@@ -33,6 +33,9 @@ async function body(req){
 function requireActiveResponse(res){
   if(res.destroyed||res.writableEnded||res.socket?.destroyed){const error=new Error('本次请求已结束，已停止后续 AI 调用。');error.status=499;throw error;}
 }
+function requireAiAvailable(){
+  if(closing){const error=new Error('后台正在退出，已停止接受新的 AI 任务。');error.status=503;throw error;}
+}
 async function allowedRow(id){
   if(!/^[a-f0-9]{24}$/.test(id))return null;
   const row=store.getRaw(id);if(!row||!row.alive||!config.isAllowed(row.path))return null;
@@ -58,6 +61,10 @@ async function handler(req,res){
     if(route==='/api/health'&&req.method==='GET')return json(res,200,{ok:true,version:config.VERSION,application:'DrawingWorkbench',appDirectory:config.APP_DIR,dataDirectory:config.DATA_DIR});
     if(route==='/api/system/shutdown'&&req.method==='POST'){
       await body(req);
+      if(closing)return json(res,503,{error:'后台正在退出，请稍候。'});
+      if(ai.status().busy)return json(res,409,{error:'AI 任务正在进行，请等任务完成后再退出或升级。'});
+      // No await between the busy check and closing: a new AI task cannot enter this gap.
+      closing=true;
       json(res,200,{ok:true});setImmediate(shutdown);return;
     }
     if(route==='/api/status'&&req.method==='GET')return json(res,200,{version:config.VERSION,engine:indexer.engine(),indexing:indexer.status(),pdfIndex:pdfIndexer.status(),stats:store.stats(),settings:config.getSettings(),ai:ai.status(),capabilities:preview.capabilities});
@@ -81,6 +88,7 @@ async function handler(req,res){
     if(route==='/api/ai/settings'&&req.method==='GET')return json(res,200,{settings:config.getSettings().ai,...ai.status()});
     if(route==='/api/ai/settings'&&req.method==='PUT'){
       const input=await body(req);const next=config.validateAiSettings(input,config.getSettings().ai);
+      requireAiAvailable();
       if(ai.status().busy){const error=new Error('AI 任务进行中，请完成后再修改配置。');error.status=409;throw error;}
       const credentials={};for(const key of ['apiKey','clearKey'])if(key in input)credentials[key]=input[key];
       await ai.saveCredentials(credentials);
@@ -88,9 +96,10 @@ async function handler(req,res){
       if(next.enabled&&!ai.status().configured)throw new Error('请先填写并保存 DeepSeek API Key，再开启 AI。');
       config.saveSettings({ai:next});return json(res,200,{settings:config.getSettings().ai,...ai.status()});
     }
-    if(route==='/api/ai/test'&&req.method==='POST'){await body(req);return json(res,200,await ai.testConnection());}
+    if(route==='/api/ai/test'&&req.method==='POST'){await body(req);requireAiAvailable();return json(res,200,await ai.testConnection());}
     if(route==='/api/ai/search'&&req.method==='POST'){
       const input=await body(req),scope=aiStore.normalizeScope(input.scope),settings=config.getSettings().ai,snapshots=new Map();
+      requireAiAvailable();
       const result=await ai.search(input.query,async plan=>{
         requireActiveResponse(res);
         const candidates=aiStore.candidates(plan,scope,settings.candidateLimit,settings.sendPdfText),safe=[];
@@ -121,6 +130,7 @@ async function handler(req,res){
         originals.set(id,aiStore.captureSnapshot(row));files.push(aiStore.metadataForAi(row,settings.sendPdfText));
       }
       requireActiveResponse(res);
+      requireAiAvailable();
       const result=await ai.classify(files),suggestions=aiStore.saveSuggestions(result.suggestions,originals);
       return json(res,200,{suggestions,usage:result.usage,notice:'AI 建议已保存在本机，需逐条确认后才会写入分类。未分析 CAD 几何或上传原文件。'+(settings.sendPdfText&&input.ids.length>1?'批量仅使用已有 PDF 文字；尚未提取的图纸可先打开详情，或单独分析。':'')});
     }
@@ -167,7 +177,7 @@ const server=http.createServer((req,res)=>handler(req,res).catch(e=>{console.err
 server.requestTimeout=60000;server.headersTimeout=10000;
 server.listen(config.PORT,HOST,()=>{fs.writeFileSync(path.join(config.DATA_DIR,'server.pid'),String(process.pid));console.log(`图纸工作台 V${config.VERSION} http://${HOST}:${config.PORT}`);indexer.start();pdfIndexer.start().catch(error=>console.error('PDF 索引启动失败',error.message));if(config.getSettings().autoStart)desktop.setAutoStart(true).catch(error=>console.error('自动启动入口同步失败',error.message));});
 server.on('error',e=>{console.error('服务启动失败',e.message);process.exitCode=1;indexer.stop();pdfIndexer.stop();store.close();});
-let closing=false;
-function shutdown(){if(closing)return;closing=true;indexer.stop();pdfIndexer.stop();server.close(()=>{try{store.close();}catch{}process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();}
+let closing=false,shutdownStarted=false;
+function shutdown(){if(shutdownStarted)return;shutdownStarted=true;closing=true;indexer.stop();pdfIndexer.stop();server.close(()=>{try{store.close();}catch{}process.exit(0);});setTimeout(()=>process.exit(0),3000).unref();}
 process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
 module.exports={server,allowedRow,secure};
