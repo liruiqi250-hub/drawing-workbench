@@ -55,7 +55,7 @@ async function handler(req,res){
   if(!secure(req,res))return;
   const url=new URL(req.url,`http://127.0.0.1:${config.PORT}`),route=url.pathname;
   try{
-    if(route==='/api/health'&&req.method==='GET')return json(res,200,{ok:true,version:config.VERSION,application:'DrawingWorkbench',appDirectory:config.APP_DIR});
+    if(route==='/api/health'&&req.method==='GET')return json(res,200,{ok:true,version:config.VERSION,application:'DrawingWorkbench',appDirectory:config.APP_DIR,dataDirectory:config.DATA_DIR});
     if(route==='/api/system/shutdown'&&req.method==='POST'){
       await body(req);
       json(res,200,{ok:true});setImmediate(shutdown);return;

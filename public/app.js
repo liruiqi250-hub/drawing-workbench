@@ -712,7 +712,8 @@
   async function fileAction(file, action, button) {
     button.disabled = true;
     try {
-      await api(`/api/files/${encodeURIComponent(file.id)}/${action}`, { method: 'POST' });
+      if(action === 'locate' && window.drawingDesktop?.locateFile) await window.drawingDesktop.locateFile(file.id);
+      else await api(`/api/files/${encodeURIComponent(file.id)}/${action}`, { method: 'POST' });
       errorFor('action', '');
       notice(action === 'open' ? `已请求本机打开：${file.name}` : `已请求资源管理器定位：${file.name}`);
     } catch (error) { errorFor('action', error.message); notice(error.message, true); }

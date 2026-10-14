@@ -1,0 +1,21 @@
+:root {color-scheme:dark;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;background:#101b28;color:#e6edf4;font-size:16px;line-height:1.65}
+* {box-sizing:border-box}
+body {margin:0;min-height:100vh;display:grid;place-items:center;padding:40px}
+main {width:min(100%,640px);padding:44px;border:1px solid #344658;border-radius:14px;background:#182635}
+.eyebrow {color:#80d9c1;font-size:14px;margin:0 0 18px}
+h1 {font-size:28px;line-height:1.4;margin:0 0 14px;font-weight:600}
+p {margin:0;overflow-wrap:anywhere}
+.description,#hint {color:#bbc9d6}
+.status {display:flex;align-items:flex-start;gap:12px;margin:30px 0 12px;padding:18px;background:#101b28;border:1px solid #344658;border-radius:8px}
+#indicator {flex:none;width:10px;height:10px;border-radius:50%;background:#5ed0b0;margin-top:8px}
+.status.error #indicator {background:#f4ad76}
+#hint,.privacy {font-size:14px}
+.actions {display:flex;flex-wrap:wrap;gap:12px;margin:26px 0}
+button {font:inherit;font-weight:600;border:1px solid #62d6b6;border-radius:7px;background:#62d6b6;color:#10251f;padding:10px 22px;min-height:46px;cursor:pointer}
+button:hover:not(:disabled) {background:#86e4ca}
+button.secondary {background:transparent;border-color:#6c8398;color:#e6edf4}
+button.secondary:hover:not(:disabled) {background:#263b4e}
+button:disabled {cursor:wait;opacity:.6}
+button:focus-visible {outline:3px solid #e6edf4;outline-offset:4px}
+.privacy {color:#9db0c1;border-top:1px solid #344658;padding-top:22px}
+@media (max-width:600px) {body{padding:20px}main{padding:26px}h1{font-size:24px}}

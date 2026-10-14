@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+  <title>图纸工作台 V0.6.0</title>
+  <link rel="stylesheet" href="startup.css">
+  <script defer src="startup.js"></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">图纸工作台 · V0.6.0</p>
+    <h1>本地图纸，随时可查</h1>
+    <p class="description">正在准备搜索、分类与预览所需的本地服务。</p>
+    <div class="status" role="status" aria-live="polite"><span id="indicator" aria-hidden="true"></span><p id="message">正在启动本地图纸服务…</p></div>
+    <p id="hint">首次启动可能需要片刻，请保持窗口打开。</p>
+    <div class="actions"><button id="retry" type="button" disabled>正在启动…</button><button id="quit" class="secondary" type="button">退出程序</button></div>
+    <p class="privacy">本地索引与个人配置保存在当前 Windows 用户的数据目录。</p>
+  </main>
+</body>
+</html>
